@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-14T00:00:00.000Z",
+  "title": "Design System: SubGen",
+  "extensions": {
+    "colorMeta": {
+      "precision-indigo": {
+        "role": "primary",
+        "displayName": "Precision Indigo",
+        "canonical": "oklch(65% 0.22 265)",
+        "tonalRamp": [
+          "oklch(15% 0.22 265)",
+          "oklch(25% 0.22 265)",
+          "oklch(35% 0.22 265)",
+          "oklch(45% 0.22 265)",
+          "oklch(55% 0.22 265)",
+          "oklch(65% 0.22 265)",
+          "oklch(75% 0.22 265)",
+          "oklch(85% 0.22 265)"
+        ]
+      },
+      "instrument-base": {
+        "role": "neutral",
+        "displayName": "Instrument Base",
+        "canonical": "oklch(10% 0.012 265)",
+        "tonalRamp": [
+          "oklch(8% 0.010 265)",
+          "oklch(10% 0.012 265)",
+          "oklch(15% 0.013 265)",
+          "oklch(20% 0.014 265)",
+          "oklch(30% 0.016 265)",
+          "oklch(40% 0.018 265)",
+          "oklch(60% 0.020 265)",
+          "oklch(80% 0.015 265)"
+        ]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "Text Primary",
+        "canonical": "oklch(95% 0.008 265)",
+        "tonalRamp": [
+          "oklch(70% 0.010 265)",
+          "oklch(78% 0.009 265)",
+          "oklch(85% 0.008 265)",
+          "oklch(90% 0.008 265)",
+          "oklch(95% 0.008 265)",
+          "oklch(96% 0.006 265)",
+          "oklch(97% 0.004 265)",
+          "oklch(98% 0.002 265)"
+        ]
+      },
+      "status-success": {
+        "role": "semantic",
+        "displayName": "Status Success",
+        "canonical": "oklch(72% 0.16 145)",
+        "tonalRamp": [
+          "oklch(15% 0.16 145)",
+          "oklch(30% 0.16 145)",
+          "oklch(45% 0.16 145)",
+          "oklch(58% 0.16 145)",
+          "oklch(65% 0.16 145)",
+          "oklch(72% 0.16 145)",
+          "oklch(80% 0.16 145)",
+          "oklch(90% 0.16 145)"
+        ]
+      },
+      "status-danger": {
+        "role": "semantic",
+        "displayName": "Status Danger",
+        "canonical": "oklch(65% 0.20 20)",
+        "tonalRamp": [
+          "oklch(15% 0.20 20)",
+          "oklch(30% 0.20 20)",
+          "oklch(45% 0.20 20)",
+          "oklch(55% 0.20 20)",
+          "oklch(65% 0.20 20)",
+          "oklch(75% 0.20 20)",
+          "oklch(85% 0.20 20)",
+          "oklch(92% 0.20 20)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page title only. Appears once per screen."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Primary reading text, descriptions, captions. Max 65ch line length."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Form labels, step indicators, category tags."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Timestamps (00:01:23,456), filenames, technical values. tabular-nums always on."
+      }
+    },
+    "shadows": [
+      {
+        "name": "subtle-float",
+        "value": "0 4px 16px rgba(0,0,0,0.25)",
+        "purpose": "Tooltips, dropdown menus, floating preview panels. Highest z-index only."
+      },
+      {
+        "name": "accent-glow",
+        "value": "0 0 24px oklch(65% 0.22 265 / 20%)",
+        "purpose": "Primary button active state. Only functional glow in the system."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-standard",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Default exit/entrance easing. Used for fade-up and state transitions."
+      },
+      {
+        "name": "ease-out-fast",
+        "value": "cubic-bezier(0, 0, 0.2, 1)",
+        "purpose": "Hover state transitions (background-color, border-color)."
+      },
+      {
+        "name": "duration-state",
+        "value": "150-200ms",
+        "purpose": "Hover, focus, active state changes."
+      },
+      {
+        "name": "duration-entrance",
+        "value": "350ms",
+        "purpose": "New element appearance (results panel, error alert)."
+      },
+      {
+        "name": "duration-progress",
+        "value": "300-500ms",
+        "purpose": "Progress indicator color transitions on connecting lines."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "content-max",
+        "value": "512px",
+        "purpose": "Maximum width of the main content column (max-w-lg)."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main call-to-action: submit file for processing. Full-width, precision indigo background with glow on active.",
+      "html": "<button class=\"ds-btn-primary\">生成字幕</button>",
+      "css": ".ds-btn-primary { width: 100%; padding: 14px 24px; background: oklch(65% 0.22 265); color: white; border: none; border-radius: 16px; font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: background-color 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 0 24px oklch(65% 0.22 265 / 20%); } .ds-btn-primary:hover { background: oklch(70% 0.22 265); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(65% 0.22 265); outline-offset: 2px; } .ds-btn-primary:disabled { background: oklch(20% 0.018 265); color: oklch(48% 0.016 265); cursor: not-allowed; box-shadow: none; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-subtle",
+      "description": "Secondary text action. Transparent background, subtle border and surface appear on hover.",
+      "html": "<button class=\"ds-btn-ghost\">预览字幕内容 <svg width=\"14\" height=\"14\" viewBox=\"0 0 14 14\" fill=\"none\"><path d=\"M3 5l4 4 4-4\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: space-between; width: 100%; padding: 10px 16px; background: transparent; color: oklch(48% 0.016 265); border: 1px solid transparent; border-radius: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.75rem; cursor: pointer; transition: background-color 0.15s ease, border-color 0.15s ease; } .ds-btn-ghost:hover { background: oklch(13% 0.014 265); border-color: oklch(22% 0.018 265); } .ds-btn-ghost:focus-visible { outline: 2px solid oklch(65% 0.22 265); outline-offset: 2px; }"
+    },
+    {
+      "name": "Chip Badge",
+      "kind": "chip",
+      "refersTo": "chip-badge",
+      "description": "Informational technology badge. Displays service names like 'Whisper · DeepL'.",
+      "html": "<span class=\"ds-chip\">Whisper · DeepL</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; padding: 4px 10px; background: oklch(65% 0.22 265 / 12%); color: oklch(65% 0.22 265); border: 1px solid oklch(65% 0.22 265 / 20%); border-radius: 9999px; font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.75rem; font-weight: 500; }"
+    },
+    {
+      "name": "Language Select",
+      "kind": "input",
+      "refersTo": "input-select",
+      "description": "Dropdown for source/target language selection with flag emoji + label.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\">识别语言</label><div class=\"ds-select-wrap\"><select class=\"ds-select\"><option>🇯🇵 日语</option><option>🇨🇳 中文</option><option>🇺🇸 英语</option></select><svg class=\"ds-select-arrow\" width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" fill=\"none\"><path d=\"M2 4l4 4 4-4\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></div></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 6px; } .ds-field-label { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.75rem; font-weight: 500; color: oklch(48% 0.016 265); } .ds-select-wrap { position: relative; } .ds-select { width: 100%; appearance: none; padding: 10px 32px 10px 12px; background: oklch(16% 0.016 265); color: oklch(95% 0.008 265); border: 1px solid oklch(22% 0.018 265); border-radius: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.875rem; cursor: pointer; transition: border-color 0.15s ease; } .ds-select:hover { border-color: oklch(28% 0.022 265); } .ds-select:focus-visible { outline: 2px solid oklch(65% 0.22 265); outline-offset: 2px; } .ds-select-arrow { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: oklch(48% 0.016 265); pointer-events: none; }"
+    },
+    {
+      "name": "Drop Zone",
+      "kind": "custom",
+      "refersTo": "dropzone",
+      "description": "File upload area with dashed border. Distinct states for idle, dragging, file-selected, and too-large.",
+      "html": "<div class=\"ds-dropzone\"><div class=\"ds-dropzone-icon\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><polyline points=\"14 2 14 8 20 8\"/><line x1=\"12\" y1=\"12\" x2=\"12\" y2=\"18\"/><polyline points=\"9 15 12 18 15 15\"/></svg></div><p class=\"ds-dropzone-title\">拖放文件，或点击选择</p><p class=\"ds-dropzone-hint\">MP4 · MKV · MP3 · WAV · M4A 等 · 上限 25 MB</p></div>",
+      "css": ".ds-dropzone { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 36px 24px; background: oklch(13% 0.014 265); border: 1.5px dashed oklch(28% 0.022 265); border-radius: 16px; cursor: pointer; text-align: center; transition: border-color 0.2s ease, background-color 0.2s ease; } .ds-dropzone:hover { border-color: oklch(65% 0.22 265); background: oklch(65% 0.22 265 / 12%); } .ds-dropzone-icon { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; background: oklch(20% 0.018 265); color: oklch(48% 0.016 265); border-radius: 16px; } .ds-dropzone-title { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.875rem; font-weight: 500; color: oklch(68% 0.018 265); margin: 0; } .ds-dropzone-hint { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.75rem; color: oklch(48% 0.016 265); margin: 0; }"
+    },
+    {
+      "name": "Download Row",
+      "kind": "button",
+      "refersTo": "download-row",
+      "description": "Result download action row with icon, title, subtitle, and click-to-download feedback.",
+      "html": "<button class=\"ds-download-row\"><div class=\"ds-download-row-icon\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 14 14\" fill=\"none\"><rect x=\"1\" y=\"2\" width=\"12\" height=\"10\" rx=\"1.5\" stroke=\"currentColor\" stroke-width=\"1.2\"/><line x1=\"3\" y1=\"5.5\" x2=\"11\" y2=\"5.5\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\"/><line x1=\"3\" y1=\"8.5\" x2=\"8\" y2=\"8.5\" stroke=\"currentColor\" stroke-width=\"1.2\" stroke-linecap=\"round\"/></svg></div><div class=\"ds-download-row-text\"><span class=\"ds-download-row-title\">原文字幕</span><span class=\"ds-download-row-subtitle\">JA · SRT</span></div><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\"><path d=\"M8 3v7M5 7l3 3 3-3\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M3 12h10\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg></button>",
+      "css": ".ds-download-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; background: oklch(16% 0.016 265); color: oklch(48% 0.016 265); border: 1px solid oklch(22% 0.018 265); border-radius: 10px; cursor: pointer; transition: background-color 0.15s ease, border-color 0.15s ease; } .ds-download-row:hover { background: oklch(20% 0.018 265); border-color: oklch(28% 0.022 265); } .ds-download-row:focus-visible { outline: 2px solid oklch(65% 0.22 265); outline-offset: 2px; } .ds-download-row-icon { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: oklch(20% 0.018 265); color: oklch(68% 0.018 265); border-radius: 6px; flex-shrink: 0; } .ds-download-row-text { display: flex; flex-direction: column; align-items: flex-start; flex: 1; min-width: 0; } .ds-download-row-title { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.875rem; font-weight: 500; color: oklch(95% 0.008 265); } .ds-download-row-subtitle { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.75rem; color: oklch(48% 0.016 265); }"
+    },
+    {
+      "name": "Toggle Switch",
+      "kind": "custom",
+      "refersTo": "toggle-switch",
+      "description": "On/off toggle for bilingual subtitle option. Precision indigo when active.",
+      "html": "<label class=\"ds-toggle\"><div class=\"ds-toggle-track\"><div class=\"ds-toggle-thumb\"></div></div><span class=\"ds-toggle-label\">生成双语字幕</span></label>",
+      "css": ".ds-toggle { display: flex; align-items: center; gap: 12px; cursor: pointer; } .ds-toggle-track { position: relative; width: 36px; height: 20px; background: oklch(65% 0.22 265); border-radius: 9999px; transition: background-color 0.2s ease; } .ds-toggle-thumb { position: absolute; top: 2px; left: 18px; width: 16px; height: 16px; background: white; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.2s ease; } .ds-toggle-label { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.875rem; color: oklch(68% 0.018 265); user-select: none; }"
+    },
+    {
+      "name": "Error Alert",
+      "kind": "custom",
+      "refersTo": "error-alert",
+      "description": "Error state notification with danger-tinted background and border.",
+      "html": "<div class=\"ds-alert-error\"><span class=\"ds-alert-error-label\">出错了：</span>未能识别到语音内容，请检查文件格式或语言设置。</div>",
+      "css": ".ds-alert-error { padding: 12px 16px; background: oklch(65% 0.20 20 / 8%); color: oklch(65% 0.20 20); border: 1px solid oklch(65% 0.20 20 / 25%); border-radius: 10px; font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.875rem; animation: ds-fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; } .ds-alert-error-label { font-weight: 500; } @keyframes ds-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }"
+    },
+    {
+      "name": "Progress Steps",
+      "kind": "custom",
+      "refersTo": "progress-steps",
+      "description": "Horizontal step indicator showing current processing stage with animated active dot.",
+      "html": "<div class=\"ds-progress\"><div class=\"ds-progress-step ds-progress-step--active\"><div class=\"ds-progress-dot\"></div><span>压缩音频</span></div><div class=\"ds-progress-line\"></div><div class=\"ds-progress-step\"><div class=\"ds-progress-dot\"></div><span>上传文件</span></div><div class=\"ds-progress-line\"></div><div class=\"ds-progress-step\"><div class=\"ds-progress-dot\"></div><span>识别 & 翻译</span></div></div>",
+      "css": ".ds-progress { display: flex; align-items: center; gap: 8px; padding: 0 4px; } .ds-progress-step { display: flex; align-items: center; gap: 6px; flex: 1; } .ds-progress-step:last-child { flex: none; } .ds-progress-dot { width: 6px; height: 6px; border-radius: 50%; background: oklch(28% 0.022 265); transition: background-color 0.3s ease, box-shadow 0.3s ease; } .ds-progress-step--active .ds-progress-dot { background: oklch(65% 0.22 265); box-shadow: 0 0 6px oklch(65% 0.22 265); animation: ds-pulse-ring 1.5s ease-in-out infinite; } .ds-progress-step--done .ds-progress-dot { background: oklch(65% 0.22 265); } .ds-progress-step span { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif; font-size: 0.75rem; color: oklch(48% 0.016 265); transition: color 0.2s ease; } .ds-progress-step--active span, .ds-progress-step--done span { color: oklch(68% 0.018 265); } .ds-progress-line { flex: 1; height: 1px; background: oklch(22% 0.018 265); transition: background-color 0.5s ease; } .ds-progress-line--done { background: oklch(65% 0.22 265); } @keyframes ds-pulse-ring { 0%, 100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.05); } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "精密仪器",
+    "overview": "SubGen 的界面像一台精密仪器 —— 徕卡相机、示波器、高端音频分析仪。暗色机身让内容成为唯一的焦点，单一靛蓝指示灯传达关键状态，除此之外没有多余的装饰。这不是冷淡；这是一种专业工具的自律：它知道自己是手段而非目的。品牌个性「精准、高效、可靠」通过三种方式落地到视觉：(1) 纯色分层代替繁复装饰，层次由亮度差定义；(2) 靛蓝强调色只出现在功能节点 —— 选中状态、主操作、进度指示、完成信号；(3) 排版克制，只用粗细和大小两层对比，没有花哨的字重堆叠。系统明确拒绝「AI 魔盒」风格：没有霓虹渐变、没有粒子背景、没有网格线网。暗色在这里是功能选择（减少视觉噪音、突出内容），不是酷炫贴纸。",
+    "keyCharacteristics": [
+      "单色强调体系：一个靛蓝，四个 opacities，覆盖全部交互状态",
+      "纯色纵深：4 层 surface 亮度差（10% → 20%），无阴影分层",
+      "微阴影仅在最高层级（tooltip、悬浮面板）出场",
+      "OKLCH 全链路 —— 暗色下 chroma 压至 0.008–0.022，避免过饱和",
+      "组件触感「柔软克制」：圆角居中但不圆润（6–16px），过渡 150–200ms ease-out"
+    ],
+    "rules": [
+      {
+        "name": "The Single Accent Rule",
+        "body": "Precision Indigo 是唯一强调色。禁止引入第二个强调色或调整其 hue。所有交互状态通过亮度（+5%）和透明度（12%/20%）派生，不新建颜色。",
+        "section": "colors"
+      },
+      {
+        "name": "The Tinted Neutral Rule",
+        "body": "所有中性色必须向 Precision Indigo 的 hue（265）偏移至少 chroma 0.005。纯灰在暗色下看起来脏，永远禁止。",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Weight Rule",
+        "body": "只用 regular (400) 和 semibold (600)。没有 light、bold、extrabold。层次由大小决定，不由字重堆叠决定。",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-By-Default Rule",
+        "body": "所有 surface 在静止状态下平整。阴影只作为脱离文档流的信号（tooltip、菜单），不作为装饰。如果某个元素没脱离文档流却有阴影，那就是错误。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "只用 Precision Indigo 一种强调色，通过透明度和亮度派生所有状态变体",
+      "用 surface 层级（0 → 3）的亮度差区分纵深，这是主要的空间语言",
+      "保持组件触感柔软克制：圆角 6–16px，过渡 150–200ms ease-out",
+      "所有中性色向 hue 265 偏移至少 chroma 0.005 —— 纯灰在暗色下禁用",
+      "排版只用 regular 和 semibold 两个字重，层次由大小构建"
+    ],
+    "donts": [
+      "使用「AI 魔盒」风格元素：霓虹渐变、粒子背景、网格线网、玻璃拟态（glassmorphism）",
+      "引入第二个强调色或将 accent hue 偏离 265。靛蓝是系统的唯一声音",
+      "给静态卡片或面板加阴影。阴影仅用于脱离文档流的元素（tooltip、下拉菜单）",
+      "使用 #000 或 #fff。最深色是 Instrument Base，最亮色是 text-primary",
+      "在非交互元素上加发光效果。Accent Glow 仅限主按钮 active 态",
+      "给正文加 light 或 bold 字重。Regular 和 semibold 就是全部"
+    ]
+  }
+}

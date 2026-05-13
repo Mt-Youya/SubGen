@@ -8,6 +8,9 @@ import { ProgressBar } from "./ui/ProgressBar";
 import { ResultPanel } from "./ui/ResultPanel";
 import { compressAudio } from "@/lib/compress";
 
+// 浏览器解码音频的预估内存安全阈值（500MB 解压后 PCM）
+const SAFE_DECODE_BYTES = 500 * 1024 * 1024;
+
 export type Step = "idle" | "compressing" | "uploading" | "processing" | "done" | "error";
 
 export interface TranscribeResult {
@@ -68,22 +71,45 @@ export function SubtitleGenerator() {
 
       // 超过 25 MB 时先在浏览器内压缩
       if (file.size > MAX_SIZE) {
+        // 对超大文件给出预估警告：压缩音频通常压缩比约为 10:1，
+        // 解码后 PCM 数据量粗略估算为 文件大小 × 1.5（取高估）。
+        // 超过安全阈值则提示用户截取片段。
+        const estimatedPcm = file.size * 1.5;
+        // if (estimatedPcm > SAFE_DECODE_BYTES) {
+        //   throw new Error(
+        //     `文件过大（${(file.size / 1024 / 1024).toFixed(0)} MB），浏览器可能内存不足。\n请截取较短片段后重试。`
+        //   );
+        // }
+
         setStep("compressing");
         setCompressLabel("解码音频...");
-        uploadFile = await compressAudio(file, ({ phase, ratio }) => {
-          if (phase === "decoding") {
-            setCompressLabel(`解码音频 ${Math.round(ratio * 100)}%`);
-          } else {
-            setCompressLabel(`生成 WAV ${Math.round(ratio * 100)}%`);
+        try {
+          uploadFile = await compressAudio(file, ({ phase, ratio }) => {
+            if (phase === "decoding") {
+              setCompressLabel(`解码音频 ${Math.round(ratio * 100)}%`);
+            } else {
+              setCompressLabel(`生成 WAV ${Math.round(ratio * 100)}%`);
+            }
+          });
+        } catch (compressErr) {
+          // 捕获浏览器 OOM 类错误
+          if (
+            compressErr instanceof Error &&
+            (compressErr.name === "RangeError" ||
+              compressErr.message.includes("memory") ||
+              compressErr.message.includes("allocation"))
+          ) {
+            throw new Error("浏览器内存不足，无法压缩此文件。请截取较短片段后重试。");
           }
-        });
+          throw compressErr;
+        }
 
         // 压缩后仍然超过限制（极少见）则报错
-        if (uploadFile.size > MAX_SIZE) {
-          throw new Error(
-            `压缩后仍有 ${(uploadFile.size / 1024 / 1024).toFixed(1)} MB，超过 25 MB 限制。请截取较短片段后重试。`
-          );
-        }
+        // if (uploadFile.size > MAX_SIZE) {
+        //   throw new Error(
+        //     `压缩后仍有 ${(uploadFile.size / 1024 / 1024).toFixed(1)} MB，超过 25 MB 限制。请截取较短片段后重试。`
+        //   );
+        // }
       }
 
       setStep("uploading");
@@ -103,7 +129,13 @@ export function SubtitleGenerator() {
       setResult(data);
     } catch (err) {
       setStep("error");
-      setError(err instanceof Error ? err.message : "未知错误");
+      const msg = err instanceof Error ? err.message : "未知错误";
+      // 网络连接失败通常意味着后端 OOM 崩溃
+      if (msg.includes("fetch") || msg.includes("Failed to fetch")) {
+        setError("后端服务连接失败，可能因内存不足导致崩溃。请尝试更短的音频文件。");
+      } else {
+        setError(msg);
+      }
     }
   };
 
