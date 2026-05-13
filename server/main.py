@@ -19,7 +19,6 @@ import argparse
 import hashlib
 import json
 import pickle
-import re
 import subprocess
 import sys
 import tempfile

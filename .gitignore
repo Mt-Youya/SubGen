@@ -9,6 +9,8 @@ node_modules/
 # Next.js
 apps/web/.next/
 apps/web/out/
+packages/web/.next/
+packages/web/out/
 .next
 
 # Build output
@@ -37,3 +39,6 @@ __pycache__/
 *.pyo
 .venv/
 venv/
+*.egg-info/
+dist/
+.subgen_cache/

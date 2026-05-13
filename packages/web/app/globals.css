@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@theme {
+  /* OKLCH color palette — dark theme, tinted neutrals toward indigo */
+  --color-surface-0: oklch(10% 0.012 265);
+  --color-surface-1: oklch(13% 0.014 265);
+  --color-surface-2: oklch(16% 0.016 265);
+  --color-surface-3: oklch(20% 0.018 265);
+  --color-border: oklch(28% 0.022 265);
+  --color-border-subtle: oklch(22% 0.018 265);
+
+  --color-text-primary: oklch(95% 0.008 265);
+  --color-text-secondary: oklch(68% 0.018 265);
+  --color-text-tertiary: oklch(48% 0.016 265);
+
+  --color-accent: oklch(65% 0.22 265);
+  --color-accent-hover: oklch(70% 0.22 265);
+  --color-accent-muted: oklch(65% 0.22 265 / 12%);
+  --color-accent-glow: oklch(65% 0.22 265 / 20%);
+
+  --color-success: oklch(72% 0.16 145);
+  --color-danger: oklch(65% 0.20 20);
+  --color-warning: oklch(78% 0.16 75);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  --font-mono: "Berkeley Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+}
+
+::selection {
+  background: var(--color-accent-muted);
+  color: var(--color-text-primary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+@keyframes pulse-ring {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%       { opacity: 0.8; transform: scale(1.05); }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface-2) 25%,
+    var(--color-surface-3) 50%,
+    var(--color-surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
