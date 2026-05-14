@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { transcribeWithXunfei } from "@/lib/xunfei";
+import { transcribeWithSiliconFlow } from "@/lib/siliconflow";
 import { translateSegments } from "@/lib/tencent";
 import { segmentsToSrt, mergeBilingual } from "@subgen/shared";
-
-// 讯飞语言代码映射（前端用 ISO 639-1，讯飞用自己的代码）
-const LANG_MAP: Record<string, string> = {
-  zh: "cn", ja: "ja", en: "en", ko: "ko",
-  fr: "fr", de: "de", es: "es",
-};
 
 export const maxDuration = 300;
 
@@ -53,8 +47,7 @@ export async function POST(req: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const xfLang = LANG_MAP[sourceLang] ?? "cn";
-    const segments = await transcribeWithXunfei(buffer, xfLang);
+    const segments = await transcribeWithSiliconFlow(buffer, file.name, sourceLang);
 
     if (segments.length === 0) {
       return NextResponse.json({ error: "No speech detected" }, { status: 422 });

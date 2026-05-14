@@ -68,7 +68,7 @@ async function upload(
   form.append("orderId", orderId);
   form.append("index", "1");
   form.append("indexSize", "1");
-  form.append("file", new Blob([audioBuffer]), "audio.wav");
+  form.append("file", new Blob([new Uint8Array(audioBuffer)]), "audio.wav");
 
   const res = await fetch(`${BASE_URL}/upload`, { method: "POST", body: form });
   const data: XunfeiResult = await res.json();

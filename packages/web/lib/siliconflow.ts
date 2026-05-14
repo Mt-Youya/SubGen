@@ -1,33 +1,30 @@
 import type { Segment } from "@subgen/shared";
 
-interface GroqSegment {
-  start: number;
-  end: number;
+interface WhisperResponse {
   text: string;
+  segments?: Array<{
+    start: number;
+    end: number;
+    text: string;
+  }>;
 }
 
-interface GroqResponse {
-  text: string;
-  segments?: GroqSegment[];
-}
-
-export async function transcribeWithGroq(
+export async function transcribeWithSiliconFlow(
   audioBuffer: Buffer,
   filename: string,
   language: string = "ja"
 ): Promise<Segment[]> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) throw new Error("GROQ_API_KEY is not set");
+  const apiKey = process.env.SILICONFLOW_API_KEY;
+  if (!apiKey) throw new Error("SILICONFLOW_API_KEY is not set");
 
   const formData = new FormData();
-  const blob = new Blob([new Uint8Array(audioBuffer)], { type: "audio/mpeg" });
-  formData.append("file", blob, filename);
-  formData.append("model", "whisper-large-v3");
+  formData.append("file", new Blob([new Uint8Array(audioBuffer)]), filename);
+  formData.append("model", "FunAudioLLM/SenseVoiceSmall");
   formData.append("language", language);
   formData.append("response_format", "verbose_json");
   formData.append("timestamp_granularities[]", "segment");
 
-  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+  const res = await fetch("https://api.siliconflow.cn/v1/audio/transcriptions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: formData,
@@ -35,10 +32,10 @@ export async function transcribeWithGroq(
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Groq API error ${res.status}: ${err}`);
+    throw new Error(`SiliconFlow API error ${res.status}: ${err}`);
   }
 
-  const data: GroqResponse = await res.json();
+  const data: WhisperResponse = await res.json();
 
   if (data.segments && data.segments.length > 0) {
     return data.segments

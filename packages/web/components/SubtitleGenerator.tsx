@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { Segment } from "@subgen/shared";
 import { DropZone, MAX_SIZE } from "./ui/DropZone";
 import { LanguageSelect } from "./ui/LanguageSelect";
@@ -8,10 +8,30 @@ import { ProgressBar } from "./ui/ProgressBar";
 import { ResultPanel } from "./ui/ResultPanel";
 import { compressAudio } from "@/lib/compress";
 
-// 浏览器解码音频的预估内存安全阈值（500MB 解压后 PCM）
-const SAFE_DECODE_BYTES = 500 * 1024 * 1024;
-
 export type Step = "idle" | "compressing" | "uploading" | "processing" | "done" | "error";
+
+export interface TaskProgress {
+  status: "pending" | "done" | "error";
+  stage: string;
+  stage_progress: number;  // 当前阶段内 0.0 ~ 1.0
+  message: string;
+}
+
+// 各阶段权重（总和 1.0），用于合并为总进度
+const STAGE_WEIGHTS: Record<string, [number, number]> = {
+  // [起点, 权重]
+  pending:      [0.00, 0.00],
+  extracting:   [0.00, 0.10],
+  transcribing: [0.10, 0.60],
+  translating:  [0.70, 0.28],
+  done:         [0.98, 0.02],
+};
+
+export function calcTotalProgress(stage: string, stage_progress: number): number {
+  const w = STAGE_WEIGHTS[stage];
+  if (!w) return 0;
+  return Math.min(1, w[0] + w[1] * stage_progress);
+}
 
 export interface TranscribeResult {
   segments: Segment[];
@@ -43,6 +63,8 @@ export const TARGET_LANGUAGES = [
   { code: "DE", label: "德语", flag: "🇩🇪" },
 ];
 
+const POLL_INTERVAL = 1500;
+
 export function SubtitleGenerator() {
   const [file, setFile] = useState<File | null>(null);
   const [sourceLang, setSourceLang] = useState("ja");
@@ -52,35 +74,68 @@ export function SubtitleGenerator() {
   const [compressLabel, setCompressLabel] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<TranscribeResult | null>(null);
+  const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
 
   const handleFile = useCallback((f: File) => {
     setFile(f);
     setResult(null);
     setError("");
     setStep("idle");
+    setTaskProgress(null);
+    stopPolling();
   }, []);
+
+  const pollTask = (taskId: string) => {
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/transcribe/${taskId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        setTaskProgress({
+          status: data.status,
+          stage: data.stage,
+          stage_progress: data.stage_progress ?? 0,
+          message: data.message,
+        });
+
+        if (data.status === "done") {
+          stopPolling();
+          setStep("done");
+          setResult(data.result);
+        } else if (data.status === "error") {
+          stopPolling();
+          setStep("error");
+          setError(data.message || "处理失败");
+        }
+      } catch (err) {
+        stopPolling();
+        setStep("error");
+        setError("轮询任务状态失败，请刷新重试");
+      }
+    }, POLL_INTERVAL);
+  };
 
   const handleSubmit = async () => {
     if (!file) return;
 
     setError("");
     setResult(null);
+    setTaskProgress(null);
+    stopPolling();
 
     try {
       let uploadFile = file;
 
-      // 超过 25 MB 时先在浏览器内压缩
       if (file.size > MAX_SIZE) {
-        // 对超大文件给出预估警告：压缩音频通常压缩比约为 10:1，
-        // 解码后 PCM 数据量粗略估算为 文件大小 × 1.5（取高估）。
-        // 超过安全阈值则提示用户截取片段。
-        const estimatedPcm = file.size * 1.5;
-        // if (estimatedPcm > SAFE_DECODE_BYTES) {
-        //   throw new Error(
-        //     `文件过大（${(file.size / 1024 / 1024).toFixed(0)} MB），浏览器可能内存不足。\n请截取较短片段后重试。`
-        //   );
-        // }
-
         setStep("compressing");
         setCompressLabel("解码音频...");
         try {
@@ -92,7 +147,6 @@ export function SubtitleGenerator() {
             }
           });
         } catch (compressErr) {
-          // 捕获浏览器 OOM 类错误
           if (
             compressErr instanceof Error &&
             (compressErr.name === "RangeError" ||
@@ -103,13 +157,6 @@ export function SubtitleGenerator() {
           }
           throw compressErr;
         }
-
-        // 压缩后仍然超过限制（极少见）则报错
-        // if (uploadFile.size > MAX_SIZE) {
-        //   throw new Error(
-        //     `压缩后仍有 ${(uploadFile.size / 1024 / 1024).toFixed(1)} MB，超过 25 MB 限制。请截取较短片段后重试。`
-        //   );
-        // }
       }
 
       setStep("uploading");
@@ -119,18 +166,24 @@ export function SubtitleGenerator() {
       fd.append("targetLang", targetLang);
       fd.append("bilingual", String(bilingual));
 
-      setStep("processing");
       const res = await fetch("/api/transcribe", { method: "POST", body: fd });
       const data = await res.json();
-
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
+      // dev 模式：后端返回 task_id，开始轮询
+      if (data.task_id) {
+        setStep("processing");
+        setTaskProgress({ status: "pending", stage: "pending", stage_progress: 0, message: "等待处理..." });
+        pollTask(data.task_id);
+        return;
+      }
+
+      // 生产模式：同步返回结果（兼容旧行为）
       setStep("done");
       setResult(data);
     } catch (err) {
       setStep("error");
       const msg = err instanceof Error ? err.message : "未知错误";
-      // 网络连接失败通常意味着后端 OOM 崩溃
       if (msg.includes("fetch") || msg.includes("Failed to fetch")) {
         setError("后端服务连接失败，可能因内存不足导致崩溃。请尝试更短的音频文件。");
       } else {
@@ -145,17 +198,15 @@ export function SubtitleGenerator() {
   const buttonLabel = () => {
     if (step === "compressing") return compressLabel || "压缩中...";
     if (step === "uploading") return "上传中...";
-    if (step === "processing") return "识别与翻译中...";
+    if (step === "processing") return "处理中...";
     if (needsCompress) return "自动压缩并生成字幕";
     return "生成字幕";
   };
 
   return (
     <div className="space-y-3">
-      {/* Upload */}
       <DropZone file={file} onFile={handleFile} disabled={isProcessing} />
 
-      {/* Options */}
       <div
         className="rounded-[var(--radius-lg)] p-4 space-y-4"
         style={{
@@ -201,7 +252,6 @@ export function SubtitleGenerator() {
         </label>
       </div>
 
-      {/* Submit button */}
       <button
         onClick={handleSubmit}
         disabled={!file || isProcessing}
@@ -223,10 +273,8 @@ export function SubtitleGenerator() {
         )}
       </button>
 
-      {/* Progress */}
-      {isProcessing && <ProgressBar step={step} />}
+      {isProcessing && <ProgressBar step={step} taskProgress={taskProgress} />}
 
-      {/* Error */}
       {step === "error" && (
         <div
           className="rounded-[var(--radius-md)] px-4 py-3 text-sm animate-fade-up"
@@ -240,7 +288,6 @@ export function SubtitleGenerator() {
         </div>
       )}
 
-      {/* Results */}
       {step === "done" && result && (
         <ResultPanel
           result={result}

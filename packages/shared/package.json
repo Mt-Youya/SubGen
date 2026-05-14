@@ -12,6 +12,6 @@
     "build": "tsc --noEmit"
   },
   "devDependencies": {
-    "typescript": "^5"
+    "typescript": "^6.0.3"
   }
 }
