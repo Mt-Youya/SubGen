@@ -1,3 +1,5 @@
+mod ffmpeg;
+
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -71,7 +73,12 @@ fn collect_files(inputs: &[String], ext_filter: &[String], recursive: bool) -> V
     files
 }
 
-fn extract_audio(input: &Path, output_dir: &Path, duration: f64) -> Result<PathBuf, String> {
+fn extract_audio(
+    ffmpeg_path: &Path,
+    input: &Path,
+    output_dir: &Path,
+    duration: f64,
+) -> Result<PathBuf, String> {
     fs::create_dir_all(output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
 
     let stem = input
@@ -80,7 +87,7 @@ fn extract_audio(input: &Path, output_dir: &Path, duration: f64) -> Result<PathB
         .unwrap_or("audio");
     let output = output_dir.join(format!("{}.wav", stem));
 
-    let mut cmd = Command::new("ffmpeg");
+    let mut cmd = Command::new(ffmpeg_path);
     cmd.args(["-y", "-hide_banner", "-loglevel", "error"])
         .arg("-i")
         .arg(input)
@@ -98,12 +105,9 @@ fn extract_audio(input: &Path, output_dir: &Path, duration: f64) -> Result<PathB
 
     cmd.arg(&output);
 
-    let status = cmd.status().map_err(|e| {
-        format!(
-            "ffmpeg 执行失败: {}。请确保 ffmpeg 已安装并在 PATH 中",
-            e
-        )
-    })?;
+    let status = cmd
+        .status()
+        .map_err(|e| format!("ffmpeg 执行失败: {e}"))?;
 
     if status.success() {
         Ok(output)
@@ -113,6 +117,15 @@ fn extract_audio(input: &Path, output_dir: &Path, duration: f64) -> Result<PathB
 }
 
 fn main() {
+    // 确保 ffmpeg 可用（系统已安装或自动下载）
+    let ffmpeg_path = match ffmpeg::ensure_ffmpeg() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("ffmpeg 不可用: {e}");
+            exit(1);
+        }
+    };
+
     let args: Vec<String> = env::args().collect();
 
     let mut inputs: Vec<String> = Vec::new();
@@ -220,7 +233,7 @@ fn main() {
                     print!("\r[{}/{}] {} ...", idx + 1, total, display);
                     std::io::stdout().flush().ok();
 
-                    match extract_audio(input, output_dir, duration) {
+                    match extract_audio(&ffmpeg_path, input, output_dir, duration) {
                         Ok(out) => {
                             println!(
                                 "\r[{}/{}] ✓ {}",
