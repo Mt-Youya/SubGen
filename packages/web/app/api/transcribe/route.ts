@@ -1,9 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
+import { transcribeWithGroq } from "@/lib/groq";
+import { transcribeWithCloudflare } from "@/lib/cloudflare";
 import { transcribeWithSiliconFlow } from "@/lib/siliconflow";
 import { translateSegments } from "@/lib/tencent";
 import { segmentsToSrt, mergeBilingual } from "@subgen/shared";
+import { hashBuffer, cacheGet, cacheSet } from "@/lib/cache";
 
 export const maxDuration = 300;
+
+/**
+ * ASR fallback 链：Groq → Cloudflare → SiliconFlow
+ *
+ * - Groq：whisper-large-v3-turbo，最快，有真实 segments 时间戳，部分地区封锁
+ * - Cloudflare：whisper-large-v3-turbo，全球可用，按分钟计费
+ * - SiliconFlow：SenseVoiceSmall，兜底，无 segments 时间戳（整段返回）
+ */
+async function transcribeWithFallback(
+  buffer: Buffer,
+  filename: string,
+  sourceLang: string
+): Promise<{ segments: Awaited<ReturnType<typeof transcribeWithGroq>>; provider: string }> {
+  const errors: string[] = [];
+
+  // 1. Groq
+  if (process.env.GROQ_API_KEY) {
+    try {
+      const segments = await transcribeWithGroq(buffer, filename, sourceLang);
+      return { segments, provider: "groq" };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`Groq: ${msg}`);
+      console.warn("[transcribe] Groq failed, trying Cloudflare...", msg);
+    }
+  }
+
+  // 2. Cloudflare Workers AI
+  if (process.env.CF_ACCOUNT_ID && process.env.CF_API_TOKEN) {
+    try {
+      const segments = await transcribeWithCloudflare(buffer, sourceLang);
+      return { segments, provider: "cloudflare" };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`Cloudflare: ${msg}`);
+      console.warn("[transcribe] Cloudflare failed, trying SiliconFlow...", msg);
+    }
+  }
+
+  // 3. SiliconFlow（兜底，无精确时间戳）
+  if (process.env.SILICONFLOW_API_KEY) {
+    try {
+      const segments = await transcribeWithSiliconFlow(buffer, filename, sourceLang);
+      return { segments, provider: "siliconflow" };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`SiliconFlow: ${msg}`);
+    }
+  }
+
+  throw new Error(`所有 ASR 服务均失败：${errors.join(" | ")}`);
+}
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -27,7 +82,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── 生产模式：讯飞 + 腾讯 ────────────────────────────────────────
+  // ── 生产模式 ─────────────────────────────────────────────────────
   try {
     const file = formData.get("file") as File | null;
     const sourceLang = (formData.get("sourceLang") as string) || "ja";
@@ -41,13 +96,29 @@ export async function POST(req: NextRequest) {
     const maxSize = 4.5 * 1024 * 1024;
     if (file.size > maxSize) {
       return NextResponse.json(
-        { error: `文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB），上限 4.5 MB。请使用较短的音频片段。` },
+        { error: `文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB），上限 4.5 MB。` },
         { status: 413 }
       );
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const segments = await transcribeWithSiliconFlow(buffer, file.name, sourceLang);
+
+    // ── 缓存查询 ──────────────────────────────────────────────────
+    const cacheKey = hashBuffer(buffer, sourceLang);
+    const cached = await cacheGet(cacheKey);
+
+    let segments: Awaited<ReturnType<typeof transcribeWithGroq>>;
+    let provider: string;
+
+    if (cached) {
+      segments = cached.segments;
+      provider = `${cached.provider}(cached)`;
+      console.log(`[transcribe] cache hit key=${cacheKey.slice(0, 16)}… provider=${cached.provider}`);
+    } else {
+      ({ segments, provider } = await transcribeWithFallback(buffer, file.name, sourceLang));
+      // 异步写缓存，不阻塞响应
+      cacheSet(cacheKey, { segments, provider }).catch(() => {});
+    }
 
     if (segments.length === 0) {
       return NextResponse.json({ error: "No speech detected" }, { status: 422 });
@@ -55,7 +126,7 @@ export async function POST(req: NextRequest) {
 
     // targetLang=none 表示分片模式，只返回 segments，翻译由 /api/translate 统一处理
     if (targetLang === "none") {
-      return NextResponse.json({ segments });
+      return NextResponse.json({ segments, provider });
     }
 
     const translated = await translateSegments(segments, targetLang);
@@ -63,6 +134,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       segments,
       translated,
+      provider,
       srt: {
         original: segmentsToSrt(segments),
         translated: segmentsToSrt(translated),

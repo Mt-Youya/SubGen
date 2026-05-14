@@ -22,7 +22,7 @@ export async function transcribeWithGroq(
   const formData = new FormData();
   const blob = new Blob([new Uint8Array(audioBuffer)], { type: "audio/mpeg" });
   formData.append("file", blob, filename);
-  formData.append("model", "whisper-large-v3");
+  formData.append("model", "whisper-large-v3-turbo");
   formData.append("language", language);
   formData.append("response_format", "verbose_json");
   formData.append("timestamp_granularities[]", "segment");
