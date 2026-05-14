@@ -21,11 +21,13 @@ const STAGE_LABEL: Record<string, string> = {
 interface ProgressBarProps {
   step: Step;
   taskProgress?: TaskProgress | null;
+  uploadLabel?: string;
 }
 
-export function ProgressBar({ step, taskProgress }: ProgressBarProps) {
+export function ProgressBar({ step, taskProgress, uploadLabel }: ProgressBarProps) {
   const currentIndex = FLOW_STEPS.findIndex((s) => s.key === step);
   const isProcessing = step === "processing" && taskProgress != null;
+  const isUploading = step === "uploading" && !!uploadLabel;
 
   const totalPct = isProcessing
     ? Math.round(calcTotalProgress(taskProgress.stage, taskProgress.stage_progress) * 100)
@@ -71,6 +73,13 @@ export function ProgressBar({ step, taskProgress }: ProgressBarProps) {
           );
         })}
       </div>
+
+      {/* 上传分片进度标签 */}
+      {isUploading && (
+        <p className="text-xs text-center" style={{ color: "var(--color-text-secondary)" }}>
+          {uploadLabel}
+        </p>
+      )}
 
       {/* 任务进度（仅 processing 阶段显示） */}
       {isProcessing && (

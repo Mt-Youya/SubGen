@@ -2,11 +2,11 @@
 
 import { useState, useCallback, useRef } from "react";
 import type { Segment } from "@subgen/shared";
-import { DropZone, MAX_SIZE } from "./ui/DropZone";
+import { DropZone } from "./ui/DropZone";
 import { LanguageSelect } from "./ui/LanguageSelect";
 import { ProgressBar } from "./ui/ProgressBar";
 import { ResultPanel } from "./ui/ResultPanel";
-import { compressAudio } from "@/lib/compress";
+import { splitAudio } from "@/lib/compress";
 
 export type Step = "idle" | "compressing" | "uploading" | "processing" | "done" | "error";
 
@@ -72,6 +72,7 @@ export function SubtitleGenerator() {
   const [bilingual, setBilingual] = useState(true);
   const [step, setStep] = useState<Step>("idle");
   const [compressLabel, setCompressLabel] = useState("");
+  const [uploadLabel, setUploadLabel] = useState("");
   const [error, setError] = useState("");
   const [result, setResult] = useState<TranscribeResult | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
@@ -133,59 +134,110 @@ export function SubtitleGenerator() {
     stopPolling();
 
     try {
-      let uploadFile = file;
-
-      if (file.size > MAX_SIZE) {
-        setStep("compressing");
-        setCompressLabel("解码音频...");
-        try {
-          uploadFile = await compressAudio(file, ({ phase, ratio }) => {
-            if (phase === "decoding") {
-              setCompressLabel(`解码音频 ${Math.round(ratio * 100)}%`);
-            } else {
-              setCompressLabel(`生成 WAV ${Math.round(ratio * 100)}%`);
-            }
-          });
-        } catch (compressErr) {
-          if (
-            compressErr instanceof Error &&
-            (compressErr.name === "RangeError" ||
-              compressErr.message.includes("memory") ||
-              compressErr.message.includes("allocation"))
-          ) {
-            throw new Error("浏览器内存不足，无法压缩此文件。请截取较短片段后重试。");
+      // ── 压缩 + 分片 ────────────────────────────────────────────────
+      setStep("compressing");
+      setCompressLabel("解码音频...");
+      let chunks: Awaited<ReturnType<typeof splitAudio>>;
+      try {
+        chunks = await splitAudio(file, ({ phase, ratio }) => {
+          if (phase === "decoding") {
+            setCompressLabel(`解码音频 ${Math.round(ratio * 100)}%`);
+          } else {
+            setCompressLabel(`生成分片 ${Math.round(ratio * 100)}%`);
           }
-          throw compressErr;
+        });
+      } catch (compressErr) {
+        if (
+          compressErr instanceof Error &&
+          (compressErr.name === "RangeError" ||
+            compressErr.message.includes("memory") ||
+            compressErr.message.includes("allocation"))
+        ) {
+          throw new Error("浏览器内存不足，无法处理此文件。请截取较短片段后重试。");
         }
+        throw compressErr;
       }
 
+      // ── 串行上传每片，合并识别结果 ────────────────────────────────
       setStep("uploading");
-      const fd = new FormData();
-      fd.append("file", uploadFile);
-      fd.append("sourceLang", sourceLang);
-      fd.append("targetLang", targetLang);
-      fd.append("bilingual", String(bilingual));
+      const allSegments: Segment[] = [];
 
-      const res = await fetch("/api/transcribe", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      for (let i = 0; i < chunks.length; i++) {
+        const { file: chunkFile, startTime } = chunks[i];
+        setUploadLabel(
+          chunks.length > 1
+            ? `上传第 ${i + 1} / ${chunks.length} 片`
+            : "上传中..."
+        );
 
-      // dev 模式：后端返回 task_id，开始轮询
-      if (data.task_id) {
-        setStep("processing");
-        setTaskProgress({ status: "pending", stage: "pending", stage_progress: 0, message: "等待处理..." });
-        pollTask(data.task_id);
-        return;
+        const fd = new FormData();
+        fd.append("file", chunkFile);
+        fd.append("sourceLang", sourceLang);
+        // 分片只做识别，翻译统一在最后做，传 targetLang=none 跳过
+        fd.append("targetLang", "none");
+        fd.append("bilingual", "false");
+
+        const res = await fetch("/api/transcribe", { method: "POST", body: fd });
+
+        let data: { segments?: Segment[]; error?: string; task_id?: string };
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error(`第 ${i + 1} 片响应解析失败（HTTP ${res.status}）`);
+        }
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        // dev 模式暂不支持分片轮询，直接返回
+        if (data.task_id) {
+          setStep("processing");
+          setTaskProgress({ status: "pending", stage: "pending", stage_progress: 0, message: "等待处理..." });
+          pollTask(data.task_id);
+          return;
+        }
+
+        // 修正时间偏移后追加
+        const shifted = (data.segments ?? []).map((s) => ({
+          ...s,
+          start: s.start + startTime,
+          end: s.end + startTime,
+        }));
+        allSegments.push(...shifted);
       }
 
-      // 生产模式：同步返回结果（兼容旧行为）
+      if (allSegments.length === 0) {
+        throw new Error("未检测到语音内容");
+      }
+
+      // ── 翻译（一次性，针对合并后的全量 segments）────────────────────
+      setStep("processing");
+      setTaskProgress({ status: "pending", stage: "translating", stage_progress: 0, message: "翻译字幕..." });
+
+      const translateFd = new FormData();
+      // 把 segments 作为 JSON 字段传给后端
+      translateFd.append("segments", JSON.stringify(allSegments));
+      translateFd.append("targetLang", targetLang);
+      translateFd.append("bilingual", String(bilingual));
+
+      const translateRes = await fetch("/api/translate", { method: "POST", body: translateFd });
+      let translateData: { translated?: Segment[]; srt?: TranscribeResult["srt"]; error?: string };
+      try {
+        translateData = await translateRes.json();
+      } catch {
+        throw new Error("翻译响应解析失败");
+      }
+      if (!translateRes.ok) throw new Error(translateData.error || `HTTP ${translateRes.status}`);
+
       setStep("done");
-      setResult(data);
+      setResult({
+        segments: allSegments,
+        translated: translateData.translated ?? [],
+        srt: translateData.srt ?? { original: "", translated: "", bilingual: null },
+      });
     } catch (err) {
       setStep("error");
       const msg = err instanceof Error ? err.message : "未知错误";
       if (msg.includes("fetch") || msg.includes("Failed to fetch")) {
-        setError("后端服务连接失败，可能因内存不足导致崩溃。请尝试更短的音频文件。");
+        setError("网络连接失败，请检查网络后重试。");
       } else {
         setError(msg);
       }
@@ -193,13 +245,11 @@ export function SubtitleGenerator() {
   };
 
   const isProcessing = step === "compressing" || step === "uploading" || step === "processing";
-  const needsCompress = file ? file.size > MAX_SIZE : false;
 
   const buttonLabel = () => {
     if (step === "compressing") return compressLabel || "压缩中...";
-    if (step === "uploading") return "上传中...";
+    if (step === "uploading") return uploadLabel || "上传中...";
     if (step === "processing") return "处理中...";
-    if (needsCompress) return "自动压缩并生成字幕";
     return "生成字幕";
   };
 
@@ -273,7 +323,7 @@ export function SubtitleGenerator() {
         )}
       </button>
 
-      {isProcessing && <ProgressBar step={step} taskProgress={taskProgress} />}
+      {isProcessing && <ProgressBar step={step} taskProgress={taskProgress} uploadLabel={uploadLabel} />}
 
       {step === "error" && (
         <div

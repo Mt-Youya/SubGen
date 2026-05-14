@@ -2,7 +2,8 @@
 
 import { useRef, useState, useCallback } from "react";
 
-export const MAX_SIZE = 25 * 1024 * 1024; // 25 MB — Groq limit
+// Vercel Function 请求体上限 4.5 MB，始终压缩；此常量仅作展示用
+export const MAX_SIZE = 0;
 
 interface DropZoneProps {
   file: File | null;
@@ -151,7 +152,7 @@ export function DropZone({ file, onFile, disabled }: DropZoneProps) {
               {dragging ? "松开以上传" : "拖放文件，或点击选择"}
             </p>
             <p className="text-xs mt-1" style={{ color: "var(--color-text-tertiary)" }}>
-              MP4 · MKV · MP3 · WAV · M4A 等 · 上限 25 MB
+              MP4 · MKV · MP3 · WAV · M4A 等 · 自动压缩，取前 2 分钟
             </p>
           </div>
         </div>

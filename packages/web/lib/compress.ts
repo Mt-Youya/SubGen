@@ -1,7 +1,8 @@
 /**
- * 在浏览器中把任意音视频文件压缩为 16kHz 单声道 WAV。
- * Whisper 只需要 16kHz mono，WAV PCM 16-bit 约 1.9 MB/min。
+ * 在浏览器中把任意音视频文件压缩为 16kHz 单声道 WAV，并按需分片。
+ * Whisper 只需要 16kHz mono，WAV PCM 16-bit = 44 + samples×2 字节。
  *
+ * Vercel Function 请求体上限 4.5 MB，每片保证不超 MAX_UPLOAD_BYTES。
  * 内存优化：将解码/降采样/编码拆分到独立作用域，
  * 避免原始 ArrayBuffer 与解码后的 AudioBuffer 同时驻留内存。
  */
@@ -11,28 +12,66 @@ export interface CompressProgress {
   ratio: number; // 0–1
 }
 
-const TARGET_SAMPLE_RATE = 16000;
+export interface AudioChunk {
+  file: File;
+  startTime: number; // 该分片在原始音频中的起始秒数，用于修正 segment 时间戳
+}
 
+const TARGET_SAMPLE_RATE = 16000;
+// Vercel 上限 4.5 MB，留 0.5 MB 余量给 multipart 开销
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4 MB
+// WAV header = 44 bytes，剩余字节数 / 2（16-bit）= 每片最大样本数
+const MAX_SAMPLES = Math.floor((MAX_UPLOAD_BYTES - 44) / 2);
+
+/**
+ * 解码 + 压缩 + 分片。
+ * 返回 AudioChunk[]，每片 ≤ 4 MB，携带时间偏移用于合并时修正时间戳。
+ * 若音频较短（单片即可），返回长度为 1 的数组。
+ */
+export async function splitAudio(
+  file: File,
+  onProgress?: (p: CompressProgress) => void
+): Promise<AudioChunk[]> {
+  onProgress?.({ phase: "decoding", ratio: 0 });
+
+  const rendered = await decodeAndResample(file, onProgress);
+  const pcm = rendered.getChannelData(0);
+
+  onProgress?.({ phase: "encoding", ratio: 0 });
+
+  const chunks: AudioChunk[] = [];
+  let offset = 0;
+  const total = pcm.length;
+  let chunkIdx = 0;
+
+  while (offset < total) {
+    const slice = pcm.subarray(offset, offset + MAX_SAMPLES);
+    const wav = pcmToWav(slice, TARGET_SAMPLE_RATE);
+    const startTime = offset / TARGET_SAMPLE_RATE;
+    const baseName = file.name.replace(/\.[^.]+$/, "");
+    const chunkFile = new File(
+      [wav],
+      chunks.length === 0 && total <= MAX_SAMPLES
+        ? `${baseName}_compressed.wav`
+        : `${baseName}_part${chunkIdx + 1}.wav`,
+      { type: "audio/wav" }
+    );
+    chunks.push({ file: chunkFile, startTime });
+    offset += MAX_SAMPLES;
+    chunkIdx++;
+    onProgress?.({ phase: "encoding", ratio: Math.min(1, offset / total) });
+  }
+
+  return chunks;
+}
+
+/** @deprecated 用 splitAudio 替代，保留兼容 */
 export async function compressAudio(
   file: File,
   onProgress?: (p: CompressProgress) => void
 ): Promise<File> {
-  onProgress?.({ phase: "decoding", ratio: 0 });
-
-  // Phase 1: 解码 + 降采样（大缓冲区的生命周期限制在此函数内）
-  const rendered = await decodeAndResample(file, onProgress);
-
-  // Phase 2: 编码为 WAV（rendered 离开作用域后即可 GC）
-  let wavBlob: Blob;
-  {
-    onProgress?.({ phase: "encoding", ratio: 0.5 });
-    const pcm = rendered.getChannelData(0);
-    wavBlob = pcmToWav(pcm, TARGET_SAMPLE_RATE);
-    onProgress?.({ phase: "encoding", ratio: 1 });
-  }
-
-  const baseName = file.name.replace(/\.[^.]+$/, "");
-  return new File([wavBlob], `${baseName}_compressed.wav`, { type: "audio/wav" });
+  const chunks = await splitAudio(file, onProgress);
+  return chunks[0].file;
 }
 
 /**
@@ -53,8 +92,7 @@ async function decodeAndResample(
     onProgress?.({ phase: "decoding", ratio: 1 });
     onProgress?.({ phase: "encoding", ratio: 0 });
 
-    const duration = decoded.duration;
-    const outLength = Math.ceil(duration * TARGET_SAMPLE_RATE);
+    const outLength = Math.ceil(decoded.duration * TARGET_SAMPLE_RATE);
     const offlineCtx = new OfflineAudioContext(1, outLength, TARGET_SAMPLE_RATE);
 
     const source = offlineCtx.createBufferSource();

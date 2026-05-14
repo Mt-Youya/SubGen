@@ -38,10 +38,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    const maxSize = 25 * 1024 * 1024;
+    const maxSize = 4.5 * 1024 * 1024;
     if (file.size > maxSize) {
       return NextResponse.json(
-        { error: `File too large. Max 25 MB (got ${(file.size / 1024 / 1024).toFixed(1)} MB)` },
+        { error: `文件过大（${(file.size / 1024 / 1024).toFixed(1)} MB），上限 4.5 MB。请使用较短的音频片段。` },
         { status: 413 }
       );
     }
@@ -51,6 +51,11 @@ export async function POST(req: NextRequest) {
 
     if (segments.length === 0) {
       return NextResponse.json({ error: "No speech detected" }, { status: 422 });
+    }
+
+    // targetLang=none 表示分片模式，只返回 segments，翻译由 /api/translate 统一处理
+    if (targetLang === "none") {
+      return NextResponse.json({ segments });
     }
 
     const translated = await translateSegments(segments, targetLang);
