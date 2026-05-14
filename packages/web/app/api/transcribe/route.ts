@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ segments, provider });
     }
 
-    const translated = await translateSegments(segments, targetLang);
+    const translated = await translateSegments(segments, sourceLang, targetLang);
 
     return NextResponse.json({
       segments,

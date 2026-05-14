@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const segmentsJson = formData.get("segments") as string | null;
+    const sourceLang = (formData.get("sourceLang") as string) || "ja";
     const targetLang = (formData.get("targetLang") as string) || "ZH";
     const bilingual = formData.get("bilingual") === "true";
 
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "segments must be a non-empty array" }, { status: 400 });
     }
 
-    const translated = await translateSegments(segments, targetLang);
+    const translated = await translateSegments(segments, sourceLang, targetLang);
 
     return NextResponse.json({
       translated,

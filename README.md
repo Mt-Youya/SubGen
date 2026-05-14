@@ -13,8 +13,41 @@ SubGen/
 ├── packages/
 │   ├── web/           # Next.js Web 前端（Vercel 部署）
 │   └── shared/        # 共享类型 & SRT 工具函数
+├── extractor/         # 音频提取工具（Python CLI，跨平台）
+│   └── extract.py
 └── pnpm-workspace.yaml
 ```
+
+## extractor/ — 音频提取工具
+
+从视频文件提取 16kHz 单声道 WAV，解决浏览器无法处理大文件/移动硬盘/编码兼容问题。
+
+```bash
+# 单文件
+python extractor/extract.py video.mp4
+
+# 多个文件
+python extractor/extract.py a.mp4 b.mkv c.ts
+
+# 整个文件夹（递归）
+python extractor/extract.py ./videos/ -r
+
+# 自定义参数
+python extractor/extract.py video.mp4 -d 300 -o audio -j 4
+
+# 提取完整音频（不截取）
+python extractor/extract.py video.mp4 -d 0
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-o, --output` | 输出目录 | `output` |
+| `-d, --duration` | 提取秒数，0=完整 | `120` |
+| `-r, --recursive` | 递归子文件夹 | 否 |
+| `-j, --jobs` | 并行数 | `2` |
+| `--ext` | 扩展名过滤 | `mp4,mkv,ts,...` |
+
+输出为 16kHz 单声道 WAV PCM，可直接上传 SubGen Web 前端。需要 `ffmpeg` 在 PATH 中。
 
 ---
 

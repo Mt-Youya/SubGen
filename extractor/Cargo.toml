@@ -1,0 +1,8 @@
+[package]
+name = "subextract"
+version = "0.1.0"
+description = "Cross-platform audio extractor for SubGen — uses ffmpeg to extract 16kHz mono WAV from video files"
+edition = "2021"
+
+# Zero external dependencies — pure std lib + ffmpeg CLI
+[dependencies]

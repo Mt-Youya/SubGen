@@ -2,24 +2,23 @@
 
 import { useState, useCallback, useRef } from "react";
 import type { Segment } from "@subgen/shared";
-import { DropZone } from "./ui/DropZone";
+import { BatchDropZone, type BatchFileEntry } from "./ui/BatchDropZone";
 import { LanguageSelect } from "./ui/LanguageSelect";
-import { ProgressBar } from "./ui/ProgressBar";
-import { ResultPanel } from "./ui/ResultPanel";
-import { splitAudio } from "@/lib/compress";
+import { FileList } from "./ui/FileList";
+import { BatchProgress } from "./ui/BatchProgress";
+import { BatchResultPanel, FileResultPreview } from "./ui/BatchResultPanel";
+import { processSingleFile } from "@/lib/process";
 
 export type Step = "idle" | "compressing" | "uploading" | "processing" | "done" | "error";
 
 export interface TaskProgress {
   status: "pending" | "done" | "error";
   stage: string;
-  stage_progress: number;  // 当前阶段内 0.0 ~ 1.0
+  stage_progress: number;
   message: string;
 }
 
-// 各阶段权重（总和 1.0），用于合并为总进度
 const STAGE_WEIGHTS: Record<string, [number, number]> = {
-  // [起点, 权重]
   pending:      [0.00, 0.00],
   extracting:   [0.00, 0.10],
   transcribing: [0.10, 0.60],
@@ -63,199 +62,168 @@ export const TARGET_LANGUAGES = [
   { code: "DE", label: "德语", flag: "🇩🇪" },
 ];
 
-const POLL_INTERVAL = 1500;
+// ── Batch types ──
+
+type BatchFileStatus = "pending" | "compressing" | "uploading" | "processing" | "done" | "error";
+
+export interface BatchFile {
+  id: string;
+  file: File;
+  relativePath: string;
+  status: BatchFileStatus;
+  error?: string;
+  result?: TranscribeResult | null;
+  compressLabel?: string;
+  uploadLabel?: string;
+  taskProgress?: TaskProgress | null;
+}
+
+type BatchPhase = "selecting" | "processing" | "done";
+
+let _batchId = 0;
+
+// ── Component ──
 
 export function SubtitleGenerator() {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<BatchFile[]>([]);
+  const [phase, setPhase] = useState<BatchPhase>("selecting");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   const [sourceLang, setSourceLang] = useState("ja");
   const [targetLang, setTargetLang] = useState("ZH");
-  const [bilingual, setBilingual] = useState(true);
-  const [step, setStep] = useState<Step>("idle");
-  const [compressLabel, setCompressLabel] = useState("");
-  const [uploadLabel, setUploadLabel] = useState("");
-  const [error, setError] = useState("");
-  const [result, setResult] = useState<TranscribeResult | null>(null);
-  const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [bilingual, setBilingual] = useState(false);
+  const [useCache, setUseCache] = useState(true);
 
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const filesRef = useRef<BatchFile[]>([]);
+  // Keep ref in sync
+  filesRef.current = files;
 
-  const handleFile = useCallback((f: File) => {
-    setFile(f);
-    setResult(null);
-    setError("");
-    setStep("idle");
-    setTaskProgress(null);
-    stopPolling();
+  const updateFile = useCallback((id: string, patch: Partial<BatchFile>) => {
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
   }, []);
 
-  const pollTask = (taskId: string) => {
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/transcribe/${taskId}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+  const handleFilesAdded = useCallback(
+    (entries: BatchFileEntry[]) => {
+      // Deduplicate by name + size
+      const existing = new Set(files.map((f) => `${f.file.name}:${f.file.size}`));
+      const newEntries = entries.filter((e) => !existing.has(`${e.file.name}:${e.file.size}`));
+      if (newEntries.length === 0) return;
 
-        setTaskProgress({
-          status: data.status,
-          stage: data.stage,
-          stage_progress: data.stage_progress ?? 0,
-          message: data.message,
-        });
+      const newFiles: BatchFile[] = newEntries.map((e) => ({
+        id: `${Date.now()}-${++_batchId}`,
+        file: e.file,
+        relativePath: e.relativePath,
+        status: "pending" as BatchFileStatus,
+      }));
 
-        if (data.status === "done") {
-          stopPolling();
-          setStep("done");
-          setResult(data.result);
-        } else if (data.status === "error") {
-          stopPolling();
-          setStep("error");
-          setError(data.message || "处理失败");
-        }
-      } catch (err) {
-        stopPolling();
-        setStep("error");
-        setError("轮询任务状态失败，请刷新重试");
+      // If there are results, adding new files resets everything
+      if (phase === "done") {
+        setFiles(newFiles);
+        setPhase("selecting");
+        setExpandedId(null);
+      } else {
+        setFiles((prev) => [...prev, ...newFiles]);
       }
-    }, POLL_INTERVAL);
-  };
+    },
+    [files, phase],
+  );
+
+  const handleRemoveFile = useCallback(
+    (id: string) => {
+      setFiles((prev) => prev.filter((f) => f.id !== id));
+      if (expandedId === id) setExpandedId(null);
+    },
+    [expandedId],
+  );
 
   const handleSubmit = async () => {
-    if (!file) return;
+    const pending = files.filter((f) => f.status === "pending" || f.status === "error");
+    if (pending.length === 0) return;
 
-    setError("");
-    setResult(null);
-    setTaskProgress(null);
-    stopPolling();
+    setFiles((prev) =>
+      prev.map((f) =>
+        f.status === "pending" || f.status === "error"
+          ? { ...f, status: "pending", error: undefined, result: undefined }
+          : f,
+      ),
+    );
 
-    try {
-      // ── 压缩 + 分片 ────────────────────────────────────────────────
-      setStep("compressing");
-      setCompressLabel("解码音频...");
-      let chunks: Awaited<ReturnType<typeof splitAudio>>;
+    setPhase("processing");
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const CONCURRENCY = 2; // 同时处理 2 个文件
+
+    const processNext = async () => {
+      // Find next pending file (use ref for latest state in async context)
+      const idx = filesRef.current.findIndex((f) => f.status === "pending");
+      if (idx === -1) return;
+
+      const f = files[idx];
+      if (controller.signal.aborted) return;
+
+      setCurrentIndex((prev) => Math.max(prev, idx));
+
+      updateFile(f.id, { status: "compressing", compressLabel: "解码音频..." });
+
       try {
-        chunks = await splitAudio(file, ({ phase, ratio }) => {
-          if (phase === "decoding") {
-            setCompressLabel(`解码音频 ${Math.round(ratio * 100)}%`);
-          } else {
-            setCompressLabel(`生成分片 ${Math.round(ratio * 100)}%`);
-          }
-        });
-      } catch (compressErr) {
-        if (
-          compressErr instanceof Error &&
-          (compressErr.name === "RangeError" ||
-            compressErr.message.includes("memory") ||
-            compressErr.message.includes("allocation"))
-        ) {
-          throw new Error("浏览器内存不足，无法处理此文件。请截取较短片段后重试。");
-        }
-        throw compressErr;
-      }
-
-      // ── 串行上传每片，合并识别结果 ────────────────────────────────
-      setStep("uploading");
-      const allSegments: Segment[] = [];
-
-      for (let i = 0; i < chunks.length; i++) {
-        const { file: chunkFile, startTime } = chunks[i];
-        setUploadLabel(
-          chunks.length > 1
-            ? `上传第 ${i + 1} / ${chunks.length} 片`
-            : "上传中..."
+        const result = await processSingleFile(
+          f.file,
+          sourceLang,
+          targetLang,
+          bilingual,
+          useCache,
+          (update) => {
+            updateFile(f.id, {
+              status: update.status ?? "processing",
+              compressLabel: update.compressLabel,
+              uploadLabel: update.uploadLabel,
+              taskProgress: update.taskProgress ?? undefined,
+            } as Partial<BatchFile>);
+          },
+          controller.signal,
         );
 
-        const fd = new FormData();
-        fd.append("file", chunkFile);
-        fd.append("sourceLang", sourceLang);
-        // 分片只做识别，翻译统一在最后做，传 targetLang=none 跳过
-        fd.append("targetLang", "none");
-        fd.append("bilingual", "false");
-
-        const res = await fetch("/api/transcribe", { method: "POST", body: fd });
-
-        let data: { segments?: Segment[]; error?: string; task_id?: string };
-        try {
-          data = await res.json();
-        } catch {
-          throw new Error(`第 ${i + 1} 片响应解析失败（HTTP ${res.status}）`);
+        updateFile(f.id, { status: "done", result });
+        await processNext(); // Process next in queue
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        const msg = err instanceof Error ? err.message : "未知错误";
+        let displayMsg = msg;
+        if (msg.includes("fetch") || msg.includes("Failed to fetch")) {
+          displayMsg = "网络连接失败，请检查网络后重试。";
         }
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-
-        // dev 模式暂不支持分片轮询，直接返回
-        if (data.task_id) {
-          setStep("processing");
-          setTaskProgress({ status: "pending", stage: "pending", stage_progress: 0, message: "等待处理..." });
-          pollTask(data.task_id);
-          return;
-        }
-
-        // 修正时间偏移后追加
-        const shifted = (data.segments ?? []).map((s) => ({
-          ...s,
-          start: s.start + startTime,
-          end: s.end + startTime,
-        }));
-        allSegments.push(...shifted);
+        console.error(`[${f.file.name}] 处理失败:`, err);
+        updateFile(f.id, { status: "error", error: displayMsg });
+        await processNext();
       }
+    };
 
-      if (allSegments.length === 0) {
-        throw new Error("未检测到语音内容");
-      }
+    // Start CONCURRENCY workers
+    const workers = Array.from({ length: CONCURRENCY }, () => processNext());
+    await Promise.all(workers);
 
-      // ── 翻译（一次性，针对合并后的全量 segments）────────────────────
-      setStep("processing");
-      setTaskProgress({ status: "pending", stage: "translating", stage_progress: 0, message: "翻译字幕..." });
-
-      const translateFd = new FormData();
-      // 把 segments 作为 JSON 字段传给后端
-      translateFd.append("segments", JSON.stringify(allSegments));
-      translateFd.append("targetLang", targetLang);
-      translateFd.append("bilingual", String(bilingual));
-
-      const translateRes = await fetch("/api/translate", { method: "POST", body: translateFd });
-      let translateData: { translated?: Segment[]; srt?: TranscribeResult["srt"]; error?: string };
-      try {
-        translateData = await translateRes.json();
-      } catch {
-        throw new Error("翻译响应解析失败");
-      }
-      if (!translateRes.ok) throw new Error(translateData.error || `HTTP ${translateRes.status}`);
-
-      setStep("done");
-      setResult({
-        segments: allSegments,
-        translated: translateData.translated ?? [],
-        srt: translateData.srt ?? { original: "", translated: "", bilingual: null },
-      });
-    } catch (err) {
-      setStep("error");
-      const msg = err instanceof Error ? err.message : "未知错误";
-      if (msg.includes("fetch") || msg.includes("Failed to fetch")) {
-        setError("网络连接失败，请检查网络后重试。");
-      } else {
-        setError(msg);
-      }
-    }
+    abortRef.current = null;
+    setPhase("done");
   };
 
-  const isProcessing = step === "compressing" || step === "uploading" || step === "processing";
-
-  const buttonLabel = () => {
-    if (step === "compressing") return compressLabel || "压缩中...";
-    if (step === "uploading") return uploadLabel || "上传中...";
-    if (step === "processing") return "处理中...";
-    return "生成字幕";
+  const handleCancel = () => {
+    abortRef.current?.abort();
   };
 
+  const pendingCount = files.filter((f) => f.status === "pending" || f.status === "error").length;
+  const isProcessing = phase === "processing";
+
+  // ── Render ──
   return (
     <div className="space-y-3">
-      <DropZone file={file} onFile={handleFile} disabled={isProcessing} />
+      <BatchDropZone
+        entries={files.map((f) => ({ file: f.file, relativePath: f.relativePath }))}
+        onFilesAdded={handleFilesAdded}
+        disabled={isProcessing}
+      />
 
       <div
         className="rounded-[var(--radius-lg)] p-4 space-y-4"
@@ -270,12 +238,14 @@ export function SubtitleGenerator() {
             value={sourceLang}
             onChange={setSourceLang}
             options={SOURCE_LANGUAGES}
+            disabled={isProcessing}
           />
           <LanguageSelect
             label="翻译语言"
             value={targetLang}
             onChange={setTargetLang}
             options={TARGET_LANGUAGES}
+            disabled={isProcessing}
           />
         </div>
 
@@ -286,6 +256,7 @@ export function SubtitleGenerator() {
               className="sr-only"
               checked={bilingual}
               onChange={(e) => setBilingual(e.target.checked)}
+              disabled={isProcessing}
             />
             <div
               className="w-9 h-5 rounded-full transition-all duration-200"
@@ -300,61 +271,96 @@ export function SubtitleGenerator() {
             生成双语字幕
           </span>
         </label>
+
+        <label className="flex items-center gap-3 cursor-pointer group">
+          <div className="relative">
+            <input
+              type="checkbox"
+              className="sr-only"
+              checked={useCache}
+              onChange={(e) => setUseCache(e.target.checked)}
+              disabled={isProcessing}
+            />
+            <div
+              className="w-9 h-5 rounded-full transition-all duration-200"
+              style={{ background: useCache ? "var(--color-accent)" : "var(--color-surface-3)" }}
+            />
+            <div
+              className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-all duration-200 shadow-sm"
+              style={{ transform: useCache ? "translateX(16px)" : "translateX(0)" }}
+            />
+          </div>
+          <span className="text-sm select-none" style={{ color: "var(--color-text-secondary)" }}>
+            使用缓存（同一文件不重复处理）
+          </span>
+        </label>
       </div>
 
-      <button
-        onClick={handleSubmit}
-        disabled={!file || isProcessing}
-        className="w-full py-3.5 rounded-[var(--radius-lg)] text-sm font-medium transition-all duration-200"
-        style={{
-          background: !file || isProcessing ? "var(--color-surface-2)" : "var(--color-accent)",
-          color: !file || isProcessing ? "var(--color-text-tertiary)" : "white",
-          cursor: !file || isProcessing ? "not-allowed" : "pointer",
-          boxShadow: !file || isProcessing ? "none" : "0 0 24px var(--color-accent-glow)",
-        }}
-      >
-        {isProcessing ? (
-          <span className="flex items-center justify-center gap-2">
-            <Spinner />
-            {buttonLabel()}
-          </span>
-        ) : (
-          buttonLabel()
-        )}
-      </button>
-
-      {isProcessing && <ProgressBar step={step} taskProgress={taskProgress} uploadLabel={uploadLabel} />}
-
-      {step === "error" && (
-        <div
-          className="rounded-[var(--radius-md)] px-4 py-3 text-sm animate-fade-up"
+      {isProcessing ? (
+        <button
+          onClick={handleCancel}
+          className="w-full py-3.5 rounded-[var(--radius-lg)] text-sm font-medium transition-all duration-200"
           style={{
-            background: "oklch(65% 0.20 20 / 8%)",
-            border: "1px solid oklch(65% 0.20 20 / 25%)",
+            background: "var(--color-surface-2)",
             color: "var(--color-danger)",
+            border: "1px solid oklch(65% 0.20 20 / 25%)",
+            cursor: "pointer",
           }}
         >
-          <span className="font-medium">出错了：</span>{error}
-        </div>
+          取消处理
+        </button>
+      ) : (
+        <button
+          onClick={handleSubmit}
+          disabled={pendingCount === 0}
+          className="w-full py-3.5 rounded-[var(--radius-lg)] text-sm font-medium transition-all duration-200"
+          style={{
+            background: pendingCount === 0 ? "var(--color-surface-2)" : "var(--color-accent)",
+            color: pendingCount === 0 ? "var(--color-text-tertiary)" : "white",
+            cursor: pendingCount === 0 ? "not-allowed" : "pointer",
+            boxShadow: pendingCount === 0 ? "none" : "0 0 24px var(--color-accent-glow)",
+          }}
+        >
+          {pendingCount === 0
+            ? "暂无待处理文件"
+            : `开始批量生成（${pendingCount} 个文件）`}
+        </button>
       )}
 
-      {step === "done" && result && (
-        <ResultPanel
-          result={result}
-          baseName={file?.name.replace(/\.[^.]+$/, "") ?? "subtitle"}
+      {isProcessing && <BatchProgress files={files} currentIndex={currentIndex} />}
+
+      {phase === "done" && (
+        <BatchResultPanel
+          files={files}
+          expandedId={expandedId}
+          onToggleExpand={setExpandedId}
           sourceLang={sourceLang}
           targetLang={targetLang}
         />
       )}
-    </div>
-  );
-}
 
-function Spinner() {
-  return (
-    <svg className="animate-spin" width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
-      <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
+      {/* File list with inline results */}
+      {files.length > 0 && (
+        <FileList
+          files={files}
+          onRemove={handleRemoveFile}
+          disabled={isProcessing}
+          expandedId={expandedId}
+          onToggleExpand={(id) => setExpandedId(expandedId === id ? null : id)}
+          renderResult={(f) => {
+            if (!f.result) return null;
+            const baseName = f.file.name.replace(/\.[^.]+$/, "");
+            return (
+              <FileResultPreview
+                result={f.result}
+                baseName={baseName}
+                sourceLang={sourceLang}
+                targetLang={targetLang}
+              />
+            );
+          }}
+        />
+      )}
+    </div>
   );
 }

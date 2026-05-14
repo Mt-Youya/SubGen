@@ -86,7 +86,19 @@ async function decodeAndResample(
 
   const audioCtx = new AudioContext();
   try {
-    const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+    let decoded: AudioBuffer;
+    try {
+      decoded = await audioCtx.decodeAudioData(arrayBuffer);
+    } catch (decodeErr) {
+      const msg = decodeErr instanceof Error ? decodeErr.message : String(decodeErr);
+      if (msg.includes("Unable to decode") || msg.includes("decode")) {
+        throw new Error(
+          "浏览器无法解码此音频文件。可能原因：文件格式不兼容、编码损坏，或文件过大。" +
+          "请先用 ffmpeg 转为 WAV 再上传：ffmpeg -i 原文件 -ar 16000 -ac 1 output.wav"
+        );
+      }
+      throw decodeErr;
+    }
     // arrayBuffer 至此不再需要
 
     onProgress?.({ phase: "decoding", ratio: 1 });

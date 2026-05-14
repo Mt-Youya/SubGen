@@ -50,13 +50,14 @@ function sign(secretId: string, secretKey: string, body: string): Record<string,
 
 export async function translateSegments(
   segments: Segment[],
-  targetLang: string = "zh"  // zh | ja | en | ko | fr | de 等
+  sourceLang: string = "ja",
+  targetLang: string = "zh"
 ): Promise<Segment[]> {
   const secretId  = process.env.TENCENT_SECRET_ID;
   const secretKey = process.env.TENCENT_SECRET_KEY;
   if (!secretId || !secretKey) throw new Error("TENCENT_SECRET_ID 或 TENCENT_SECRET_KEY 未设置");
 
-  // 腾讯翻译目标语言代码（DeepL 用大写，腾讯用小写且格式略不同）
+  const src = sourceLang.toLowerCase();
   const tgt = targetLang.toLowerCase().replace("zh-tw", "zh-TW").replace("en-us", "en");
 
   const texts = segments.map((s) => s.text);
@@ -66,7 +67,7 @@ export async function translateSegments(
     const batch = texts.slice(i, i + BATCH_SIZE);
     const body = JSON.stringify({
       SourceTextList: batch,
-      Source: "auto",
+      Source: src,
       Target: tgt,
       ProjectId: 0,
     });
@@ -86,5 +87,12 @@ export async function translateSegments(
     data.Response.TargetTextList.forEach((t: string) => translated.push(t));
   }
 
-  return segments.map((seg, i) => ({ ...seg, text: translated[i] ?? seg.text }));
+  const result = segments.map((seg, i) => ({ ...seg, text: translated[i] ?? seg.text }));
+
+  // 检测翻译是否生效：源语言和目标语言不同时，结果不应全等于原文
+  if (src !== tgt && segments.every((s, i) => s.text === (result[i]?.text ?? ""))) {
+    console.warn("[tencent] 翻译结果与原文一致，翻译可能未生效");
+  }
+
+  return result;
 }

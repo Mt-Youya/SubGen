@@ -104,6 +104,27 @@ function SrtIcon() {
 
 export function ResultPanel({ result, baseName, sourceLang, targetLang }: ResultPanelProps) {
   const [showPreview, setShowPreview] = useState(false);
+  const [previewTab, setPreviewTab] = useState<"original" | "translated" | "bilingual">("original");
+
+  const previewItems = (() => {
+    switch (previewTab) {
+      case "translated":
+        return result.segments.map((seg, i) => ({
+          primary: result.translated[i]?.text ?? seg.text,
+          secondary: null,
+        }));
+      case "bilingual":
+        return result.segments.map((seg, i) => ({
+          primary: seg.text,
+          secondary: result.translated[i]?.text ?? null,
+        }));
+      default:
+        return result.segments.map((seg) => ({
+          primary: seg.text,
+          secondary: null,
+        }));
+    }
+  })();
 
   return (
     <div className="space-y-2 animate-fade-up">
@@ -194,7 +215,23 @@ export function ResultPanel({ result, baseName, sourceLang, targetLang }: Result
               borderBottom: "1px solid var(--color-border-subtle)",
             }}
           >
-            <span className="text-xs font-medium" style={{ color: "var(--color-text-tertiary)" }}>
+            <div className="flex items-center gap-1">
+              {(["original", "translated", "bilingual"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setPreviewTab(tab)}
+                  className="px-2.5 py-1 rounded-[var(--radius-sm)] text-xs transition-all duration-150"
+                  style={{
+                    background: previewTab === tab ? "var(--color-surface-3)" : "transparent",
+                    color: previewTab === tab ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
+                    fontWeight: previewTab === tab ? 500 : 400,
+                  }}
+                >
+                  {{ original: "原文", translated: "译文", bilingual: "双语" }[tab]}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
               前 {Math.min(result.segments.length, 10)} 条
             </span>
           </div>
@@ -207,7 +244,7 @@ export function ResultPanel({ result, baseName, sourceLang, targetLang }: Result
               borderColor: "var(--color-border-subtle)",
             } as React.CSSProperties}
           >
-            {result.segments.slice(0, 10).map((seg, i) => (
+            {previewItems.slice(0, 10).map((item, i) => (
               <div
                 key={i}
                 className="px-4 py-3 flex gap-4"
@@ -221,11 +258,11 @@ export function ResultPanel({ result, baseName, sourceLang, targetLang }: Result
                 </span>
                 <div className="min-w-0 space-y-0.5">
                   <p className="text-sm" style={{ color: "var(--color-text-primary)" }}>
-                    {seg.text}
+                    {item.primary}
                   </p>
-                  {result.translated[i] && (
+                  {item.secondary && (
                     <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                      {result.translated[i].text}
+                      {item.secondary}
                     </p>
                   )}
                 </div>

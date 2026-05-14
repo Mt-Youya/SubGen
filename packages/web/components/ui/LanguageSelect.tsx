@@ -11,9 +11,10 @@ interface LanguageSelectProps {
   value: string;
   onChange: (val: string) => void;
   options: Option[];
+  disabled?: boolean;
 }
 
-export function LanguageSelect({ label, value, onChange, options }: LanguageSelectProps) {
+export function LanguageSelect({ label, value, onChange, options, disabled }: LanguageSelectProps) {
   const selected = options.find((o) => o.code === value);
 
   return (
@@ -28,12 +29,14 @@ export function LanguageSelect({ label, value, onChange, options }: LanguageSele
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
           className="w-full appearance-none rounded-[var(--radius-md)] pl-3 pr-8 py-2.5 text-sm transition-colors"
           style={{
             background: "var(--color-surface-2)",
             border: "1px solid var(--color-border-subtle)",
             color: "var(--color-text-primary)",
-            cursor: "pointer",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.6 : 1,
           }}
         >
           {options.map((opt) => (

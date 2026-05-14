@@ -44,7 +44,7 @@ export default function Home() {
       </header>
 
       <main className="relative z-10 flex-1 flex items-start justify-center px-4 pt-10 pb-16">
-        <div className="w-full max-w-lg">
+        <div className="w-full max-w-2xl">
           <SubtitleGenerator />
         </div>
       </main>

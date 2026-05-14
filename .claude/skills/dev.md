@@ -34,3 +34,7 @@ pnpm --filter web dev
 - **端口占用**：`lsof -ti:8000 | xargs kill` 或 `lsof -ti:3000 | xargs kill`
 - **环境变量缺失**：检查 `packages/web/.env.local`，参考 `.env.example`
 - **ffmpeg 未安装**：`brew install ffmpeg`（Python 转录依赖）
+- **大文件无法上传**：浏览器无法加载超大文件到内存。用 `extractor/extract.py` 先提取音频，再上传 WAV 到 SubGen：
+  ```bash
+  python extractor/extract.py video.mp4 -d 120 -o ./audio
+  ```

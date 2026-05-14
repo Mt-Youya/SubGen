@@ -1,5 +1,6 @@
 # OS
 .DS_Store
+desktop.ini
 Thumbs.db
 
 # Node
@@ -42,3 +43,15 @@ venv/
 *.egg-info/
 dist/
 .subgen_cache/
+
+# Rust
+target/
+*.prof
+*.raw
+rustc-ice-*.txt
+.cargo/
+Cargo.lock          # 根据项目类型决定是否提交，库项目建议忽略，应用建议提交
+**/*.rs.bk
+*.pdb
+
+settings.local.json
