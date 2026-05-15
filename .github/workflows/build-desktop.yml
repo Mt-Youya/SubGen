@@ -1,0 +1,117 @@
+name: Build Desktop
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+
+          - os: macos-latest
+            platform: macos
+            args: "--target universal-apple-darwin"
+
+          - os: windows-latest
+            platform: windows-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            ffmpeg
+
+      - name: Install macOS whisper-cpp
+        if: matrix.platform == 'macos'
+        run: |
+          brew install whisper-cpp
+          mkdir -p packages/desktop/src-tauri/resources
+          cp /opt/homebrew/bin/whisper-cli packages/desktop/src-tauri/resources/
+          cp /opt/homebrew/Cellar/whisper-cpp/$(ls /opt/homebrew/Cellar/whisper-cpp)/lib/libwhisper.*.dylib \
+             packages/desktop/src-tauri/resources/libwhisper.1.dylib
+          cp /opt/homebrew/opt/ggml/lib/libggml.*.dylib \
+             packages/desktop/src-tauri/resources/libggml.0.dylib
+          cp /opt/homebrew/opt/ggml/lib/libggml-base.*.dylib \
+             packages/desktop/src-tauri/resources/libggml-base.0.dylib
+          # 修改 rpath 为相对路径
+          install_name_tool -change "@rpath/libwhisper.1.dylib" "@loader_path/libwhisper.1.dylib" \
+            packages/desktop/src-tauri/resources/whisper-cli
+          install_name_tool -change "$(otool -L packages/desktop/src-tauri/resources/whisper-cli | grep libggml.0 | awk '{print $1}')" \
+            "@loader_path/libggml.0.dylib" packages/desktop/src-tauri/resources/whisper-cli
+          install_name_tool -change "$(otool -L packages/desktop/src-tauri/resources/whisper-cli | grep libggml-base | awk '{print $1}')" \
+            "@loader_path/libggml-base.0.dylib" packages/desktop/src-tauri/resources/whisper-cli
+          # ad-hoc 签名
+          codesign --force --sign - packages/desktop/src-tauri/resources/whisper-cli
+          codesign --force --sign - packages/desktop/src-tauri/resources/libwhisper.1.dylib
+          codesign --force --sign - packages/desktop/src-tauri/resources/libggml.0.dylib
+          codesign --force --sign - packages/desktop/src-tauri/resources/libggml-base.0.dylib
+
+      - name: Install Windows whisper-cpp
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: |
+          mkdir -p packages/desktop/src-tauri/resources
+          # 从 whisper.cpp GitHub Releases 下载预编译 Windows 版本
+          $version = (Invoke-RestMethod "https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest").tag_name
+          $url = "https://github.com/ggerganov/whisper.cpp/releases/download/$version/whisper-$version-windows-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile whisper-win.zip
+          Expand-Archive -Path whisper-win.zip -DestinationPath whisper-win -Force
+          Copy-Item whisper-win/whisper-cli.exe packages/desktop/src-tauri/resources/
+
+      - name: Install Linux whisper-cpp
+        if: matrix.platform == 'linux-x64'
+        run: |
+          mkdir -p packages/desktop/src-tauri/resources
+          # 从源码编译（Ubuntu 上没有预编译包）
+          sudo apt-get install -y cmake build-essential
+          git clone --depth=1 https://github.com/ggerganov/whisper.cpp
+          cd whisper.cpp
+          cmake -B build -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build --target whisper-cli -j$(nproc)
+          cp build/bin/whisper-cli ../packages/desktop/src-tauri/resources/
+          chmod +x ../packages/desktop/src-tauri/resources/whisper-cli
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build desktop
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: packages/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "SubGen Desktop ${{ github.ref_name }}"
+          releaseBody: "See the assets below for your platform."
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

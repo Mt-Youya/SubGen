@@ -12,7 +12,15 @@ apps/web/.next/
 apps/web/out/
 packages/web/.next/
 packages/web/out/
+packages/desktop/.next/
+packages/desktop/out/
 .next
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
+next-env.d.ts
+**/next-env.d.ts
 
 # Build output
 dist/
@@ -50,8 +58,23 @@ target/
 *.raw
 rustc-ice-*.txt
 .cargo/
-Cargo.lock          # 根据项目类型决定是否提交，库项目建议忽略，应用建议提交
 **/*.rs.bk
 *.pdb
+out/
+
+# Tauri
+# gen/schemas 由 tauri build 自动生成
+packages/desktop/src-tauri/gen/
+# desktop resources（平台二进制，CI 构建时动态生成）
+packages/desktop/src-tauri/resources/
+
+# desktop symlinks（指向 web/，避免重复提交）
+packages/desktop/lib
+packages/desktop/components/ui
+packages/desktop/components/SubtitleGenerator.tsx
+packages/desktop/app/globals.css
 
 settings.local.json
+
+# Claude Code 本地配置（含本机绝对路径）
+# .claude/launch.json

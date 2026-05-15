@@ -63,8 +63,21 @@ export async function translateSegments(
   const texts = segments.map((s) => s.text);
   const translated: string[] = [];
 
-  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-    const batch = texts.slice(i, i + BATCH_SIZE);
+  // 按字符数分批：腾讯翻译单次总文本 < 6000 字符，最多 50 条
+  const batches: string[][] = [];
+  let cur: string[] = [], curChars = 0;
+  for (const t of texts) {
+    if (cur.length > 0 && (curChars + t.length > 5000 || cur.length >= BATCH_SIZE)) {
+      batches.push(cur);
+      cur = []; curChars = 0;
+    }
+    cur.push(t); curChars += t.length;
+  }
+  if (cur.length > 0) batches.push(cur);
+
+  const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+  for (const batch of batches) {
     const body = JSON.stringify({
       SourceTextList: batch,
       Source: src,
@@ -72,19 +85,25 @@ export async function translateSegments(
       ProjectId: 0,
     });
 
-    const headers = sign(secretId, secretKey, body);
-    const res = await fetch(`https://${ENDPOINT}`, {
-      method:  "POST",
-      headers,
-      body,
-    });
-
-    const data = await res.json();
-    if (data.Response?.Error) {
-      throw new Error(`腾讯翻译错误: ${data.Response.Error.Code} ${data.Response.Error.Message}`);
+    let lastErr = "";
+    let data: Record<string, unknown> | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await sleep(500 * 2 ** (attempt - 1));
+      const headers = sign(secretId, secretKey, body);
+      const res = await fetch(`https://${ENDPOINT}`, { method: "POST", headers, body });
+      const json = await res.json();
+      if (json.Response?.Error) {
+        const { Code, Message } = json.Response.Error;
+        if (String(Code).includes("Internal")) { lastErr = `${Code} ${Message}`; continue; }
+        throw new Error(`腾讯翻译错误: ${Code} ${Message}`);
+      }
+      data = json;
+      break;
     }
+    if (!data) throw new Error(`腾讯翻译错误: ${lastErr}`);
 
-    data.Response.TargetTextList.forEach((t: string) => translated.push(t));
+    (data as Record<string, { TargetTextList: string[] }>).Response.TargetTextList
+      .forEach((t: string) => translated.push(t));
   }
 
   const result = segments.map((seg, i) => ({ ...seg, text: translated[i] ?? seg.text }));

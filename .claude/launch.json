@@ -22,14 +22,17 @@
     {
       "name": "serve",
       "runtimeExecutable": "conda",
-      "runtimeArgs": [
-        "activate",
-        "subgen",
-        "uvicorn",
-        "api:app"
-      ],
+      "runtimeArgs": ["activate", "subgen", "uvicorn", "api:app"],
       "cwd": "/Users/yonjay/codes/hubs/SubGen/server",
       "port": 8000,
+      "autoPort": true
+    },
+    {
+      "name": "desktop",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev:desktop"],
+      "cwd": "/Users/yonjay/codes/hubs/SubGen",
+      "port": 5000,
       "autoPort": true
     },
     {
@@ -42,10 +45,7 @@
     {
       "name": "win:serve",
       "runtimeExecutable": "D:\\DevelopmentTools\\Anaconda\\Scripts\\conda.exe",
-      "runtimeArgs": [
-        "run", "-n", "subgen",
-        "uvicorn", "api:app"
-      ],
+      "runtimeArgs": ["run", "-n", "subgen", "uvicorn", "api:app"],
       "cwd": "server",
       "port": 8000,
       "autoPort": true

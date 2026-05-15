@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/whisper-cli.exe": "whisper-cli.exe"
+    }
+  }
+}
