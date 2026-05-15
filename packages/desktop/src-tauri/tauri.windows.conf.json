@@ -1,7 +1,11 @@
 {
   "bundle": {
     "resources": {
-      "resources/whisper-cli.exe": "whisper-cli.exe"
+      "whisper-cli.exe": "whisper-cli.exe",
+      "whisper.dll": "whisper.dll",
+      "ggml.dll": "ggml.dll",
+      "ggml-base.dll": "ggml-base.dll",
+      "ggml-cpu.dll": "ggml-cpu.dll"
     }
   }
 }

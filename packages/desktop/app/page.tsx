@@ -5,28 +5,48 @@ import { DesktopSubtitlePanel } from "@/components/DesktopSubtitlePanel";
 import { ExtractPanel } from "@/components/ExtractPanel";
 
 type Tab = "subtitle" | "extract";
-type FfmpegState = "checking" | "ok" | "missing" | "downloading" | "error";
+
+interface Deps {
+  ffmpeg: boolean;
+  whisper: boolean;
+  model: boolean;
+  model_path: string;
+}
+
+type DepState = "checking" | "ok" | "missing" | "downloading" | "error";
 
 function hasTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-function FfmpegBanner({ state, error, onDownload }: {
-  state: FfmpegState;
+function DepsBanner({
+  deps,
+  state,
+  error,
+  downloadingWhat,
+  onDownload,
+}: {
+  deps: Deps | null;
+  state: DepState;
   error: string;
-  onDownload: () => void;
+  downloadingWhat: string;
+  onDownload: (what: "ffmpeg" | "model") => void;
 }) {
-  if (state === "ok" || state === "checking") return null;
+  if (state === "checking") return null;
+  if (state === "ok") return null;
 
   if (state === "downloading") {
+    const label = downloadingWhat === "ffmpeg" ? "ffmpeg" : "Whisper 中文模型";
     return (
-      <div className="mx-auto mt-4 max-w-xl rounded-xl px-5 py-4 text-sm flex items-center gap-3"
-        style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)" }}>
+      <div
+        className="mx-auto mt-4 max-w-xl rounded-xl px-5 py-4 text-sm flex items-center gap-3"
+        style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)" }}
+      >
         <svg className="animate-spin shrink-0" width="16" height="16" viewBox="0 0 16 16" fill="none"
           style={{ color: "var(--color-accent)" }}>
           <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="20 18" />
         </svg>
-        <span style={{ color: "var(--color-text-secondary)" }}>正在下载 ffmpeg，请稍候...</span>
+        <span style={{ color: "var(--color-text-secondary)" }}>正在下载 {label}，请稍候...</span>
       </div>
     );
   }
@@ -40,56 +60,92 @@ function FfmpegBanner({ state, error, onDownload }: {
     );
   }
 
-  // missing
+  // missing — 列出所有缺失项
+  const missing: { what: "ffmpeg" | "model"; label: string; desc: string }[] = [];
+  if (deps && !deps.ffmpeg) {
+    missing.push({ what: "ffmpeg", label: "ffmpeg", desc: "音频提取和转码需要 ffmpeg" });
+  }
+  if (deps && (!deps.whisper || !deps.model)) {
+    const label = !deps.whisper ? "whisper-cli" : "Whisper 中文模型";
+    const desc = !deps.whisper
+      ? "本地语音转文字需要 whisper-cli"
+      : "本地 Whisper 需要中文模型（~466MB）";
+    missing.push({ what: "model", label, desc });
+  }
+
+  if (missing.length === 0) return null;
+
   return (
-    <div className="mx-auto mt-4 max-w-xl rounded-xl px-5 py-4 flex items-start gap-4"
-      style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border-subtle)" }}>
-      <div className="flex-1">
-        <p className="text-sm font-medium mb-1" style={{ color: "var(--color-text-primary)" }}>
-          缺少 ffmpeg
-        </p>
-        <p className="text-xs leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
-          字幕生成和音频提取需要 ffmpeg。点击下载静态版本（约 40MB）到应用目录，无需系统安装。
-        </p>
-      </div>
-      <button
-        onClick={onDownload}
-        className="shrink-0 rounded-lg px-4 py-2 text-sm font-medium"
-        style={{ background: "var(--color-accent)", color: "white" }}
-      >
-        下载
-      </button>
+    <div className="mx-auto mt-4 max-w-xl flex flex-col gap-2">
+      {missing.map(m => (
+        <div
+          key={m.what}
+          className="rounded-xl px-5 py-4 flex items-start gap-4"
+          style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border-subtle)" }}
+        >
+          <div className="flex-1">
+            <p className="text-sm font-medium mb-1" style={{ color: "var(--color-text-primary)" }}>
+              缺少 {m.label}
+            </p>
+            <p className="text-xs leading-relaxed" style={{ color: "var(--color-text-secondary)" }}>
+              {m.desc}
+            </p>
+          </div>
+          <button
+            onClick={() => onDownload(m.what)}
+            className="shrink-0 rounded-lg px-4 py-2 text-sm font-medium"
+            style={{ background: "var(--color-accent)", color: "white" }}
+          >
+            授权安装
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("subtitle");
-  const [ffmpegState, setFfmpegState] = useState<FfmpegState>("checking");
-  const [ffmpegError, setFfmpegError] = useState("");
+  const [deps, setDeps] = useState<Deps | null>(null);
+  const [depState, setDepState] = useState<DepState>("checking");
+  const [depError, setDepError] = useState("");
+  const [downloadingWhat, setDownloadingWhat] = useState("");
 
+  // 启动时统一检查依赖
   useEffect(() => {
     if (!hasTauri()) {
-      setFfmpegState("ok"); // 浏览器预览模式跳过检测
+      setDepState("ok");
+      setDeps({ ffmpeg: true, whisper: true, model: true, model_path: "" });
       return;
     }
     import("@tauri-apps/api/core").then(({ invoke }) => {
-      invoke<string | null>("check_ffmpeg").then(path => {
-        setFfmpegState(path ? "ok" : "missing");
-      }).catch(() => setFfmpegState("missing"));
+      invoke<Deps>("check_dependencies").then(d => {
+        setDeps(d);
+        setDepState(d.ffmpeg && d.whisper && d.model ? "ok" : "missing");
+      }).catch(() => setDepState("missing"));
     });
   }, []);
 
-  const handleDownload = async () => {
-    setFfmpegState("downloading");
-    setFfmpegError("");
+  const handleDownload = async (what: "ffmpeg" | "model") => {
+    setDepState("downloading");
+    setDownloadingWhat(what);
+    setDepError("");
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("download_ffmpeg");
-      setFfmpegState("ok");
+      if (what === "ffmpeg") {
+        await invoke("download_ffmpeg");
+        setDeps(prev => prev ? { ...prev, ffmpeg: true } : null);
+      } else {
+        await invoke("download_whisper_model");
+        setDeps(prev => prev ? { ...prev, whisper: true, model: true } : null);
+      }
+      // 重新检查确保状态正确
+      const d = await invoke<Deps>("check_dependencies");
+      setDeps(d);
+      setDepState(d.ffmpeg && d.whisper && d.model ? "ok" : "missing");
     } catch (e) {
-      setFfmpegError(String(e));
-      setFfmpegState("error");
+      setDepError(String(e));
+      setDepState("error");
     }
   };
 
@@ -132,11 +188,10 @@ export default function Home() {
           ))}
         </div>
 
-        <FfmpegBanner state={ffmpegState} error={ffmpegError} onDownload={handleDownload} />
+        <DepsBanner deps={deps} state={depState} error={depError} downloadingWhat={downloadingWhat} onDownload={handleDownload} />
       </header>
 
       <main className="flex-1 px-4 pt-8 pb-16">
-        {/* 两个 Tab 同时挂载，用 display:none 隐藏非活跃的，状态不丢失 */}
         <div className="flex items-start justify-center" style={{ display: tab === "subtitle" ? "flex" : "none" }}>
           <div className="w-full max-w-6xl">
             <DesktopSubtitlePanel />

@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 name = "subgen_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]
 
 [[bin]]
 name = "subgen-desktop"

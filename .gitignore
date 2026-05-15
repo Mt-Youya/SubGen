@@ -78,3 +78,11 @@ settings.local.json
 
 # Claude Code 本地配置（含本机绝对路径）
 # .claude/launch.json
+
+# Codex
+.codex-run/
+
+# whisper.cpp binaries (downloaded at build/setup time)
+packages/desktop/src-tauri/whisper-cli.exe
+packages/desktop/src-tauri/whisper.dll
+packages/desktop/src-tauri/ggml*.dll

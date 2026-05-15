@@ -290,6 +290,21 @@ fn parse_srt_time(s: &str) -> f64 {
     h * 3600.0 + m * 60.0 + sec
 }
 
+/// 统一检查所有依赖（ffmpeg、whisper-cli、whisper 模型）
+#[tauri::command]
+pub fn check_dependencies(app: AppHandle) -> serde_json::Value {
+    let ffmpeg_ok = resolve_ffmpeg(&app).is_ok();
+    let whisper_ok = resolve_whisper(&app).is_ok();
+    let model_path = default_model_path();
+    let model_ok = model_path.exists();
+    serde_json::json!({
+        "ffmpeg": ffmpeg_ok,
+        "whisper": whisper_ok,
+        "model": model_ok,
+        "model_path": model_path.to_string_lossy()
+    })
+}
+
 /// 检查 whisper 模型是否存在
 #[tauri::command]
 pub fn check_whisper_model(app: AppHandle) -> serde_json::Value {
