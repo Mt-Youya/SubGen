@@ -1,91 +1,80 @@
-# SubGen — 视频字幕生成工具
+# SubGen — 端到端字幕生成工具
 
-自动从视频/音频提取字幕，并翻译为目标语言。
+自动从视频/音频提取字幕并翻译为目标语言。支持本地离线 ASR 和云端 API。
 
 ## 项目结构
 
 ```
 SubGen/
-├── server/            # Python CLI（本地 Whisper + 翻译，离线运行）
-│   ├── api.py
-│   ├── main.py
-│   └── pyproject.toml
 ├── packages/
+│   ├── desktop/       # Tauri v2 桌面应用（主线）
+│   │   ├── src-tauri/ # Rust 后端（whisper + ffmpeg + 翻译 API）
+│   │   ├── app/       # Next.js 前端
+│   │   └── components/
 │   ├── web/           # Next.js Web 前端（Vercel 部署）
-│   └── shared/        # 共享类型 & SRT 工具函数
-├── extractor/         # 音频提取工具（Python CLI，跨平台）
-│   └── extract.py
-└── pnpm-workspace.yaml
+│   └── shared/        # 共享类型 & SRT 工具
+├── extractor/         # Rust CLI 音频提取工具
+└── .github/workflows/ # CI/CD（desktop + extractor）
 ```
 
-## extractor/ — 音频提取工具
+## packages/desktop — Tauri 桌面应用（主线）
 
-从视频文件提取 16kHz 单声道 WAV，解决浏览器无法处理大文件/移动硬盘/编码兼容问题。
-
-```bash
-# 单文件
-python extractor/extract.py video.mp4
-
-# 多个文件
-python extractor/extract.py a.mp4 b.mkv c.ts
-
-# 整个文件夹（递归）
-python extractor/extract.py ./videos/ -r
-
-# 自定义参数
-python extractor/extract.py video.mp4 -d 300 -o audio -j 4
-
-# 提取完整音频（不截取）
-python extractor/extract.py video.mp4 -d 0
-```
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `-o, --output` | 输出目录 | `output` |
-| `-d, --duration` | 提取秒数，0=完整 | `120` |
-| `-r, --recursive` | 递归子文件夹 | 否 |
-| `-j, --jobs` | 并行数 | `2` |
-| `--ext` | 扩展名过滤 | `mp4,mkv,ts,...` |
-
-输出为 16kHz 单声道 WAV PCM，可直接上传 SubGen Web 前端。需要 `ffmpeg` 在 PATH 中。
-
----
-
-## packages/web — Next.js + Vercel（主线）
-
-云端运行，调用 **硅基流动 SenseVoice**（语音识别）+ **腾讯云翻译**（字幕翻译），无需本地 ffmpeg。
-
-### 本地开发
+跨平台桌面应用（Windows / macOS / Linux），内置本地 Whisper 语音识别。
 
 ```bash
 pnpm install
-cp packages/web/.env.example packages/web/.env.local
-# 编辑 .env.local 填入 API Key
-pnpm dev
-# 访问 http://localhost:3000
+pnpm dev:desktop
 ```
 
-> dev 模式下，`/api/transcribe` 会自动转发到本地 Python 服务（`localhost:8000`）。若只测试前端 UI 不需要转录，可跳过启动 Python 服务。
+首次启动会检查依赖（ffmpeg + whisper-cli + Whisper 模型），缺失项点击「授权安装」即可下载到应用内部，无需手动安装。
 
-### 获取 API Key
+### 功能
 
-| 服务 | 用途 | 免费额度 | 申请地址 |
-|------|------|---------|---------|
-| 硅基流动 | 语音识别（SenseVoice） | 有免费额度 | https://siliconflow.cn |
-| 腾讯云翻译 | 字幕翻译 | 500 万字符/月 | https://console.cloud.tencent.com → 机器翻译 |
+- 本地 Whisper 离线语音识别（whisper-server，模型常驻内存）
+- 云端 ASR：Groq Whisper / SiliconFlow SenseVoice
+- 翻译：DeepL / 腾讯云翻译
+- 多文件批量处理
+- 原文字幕 / 译文字幕 / 双语字幕导出
 
-### 部署到 Vercel
+### Provider 配置
+
+在应用「API 设置」面板中配置对应的 API Key。
+
+### 发布
+
+推送 `desktop-v*` tag 触发 CI 构建全平台 Release：
 
 ```bash
-# 方式一：Vercel CLI（在项目根目录）
-vercel deploy
-
-# 方式二：GitHub 集成
-# 推送到 GitHub → vercel.com 导入仓库
-# Root Directory 留空（vercel.json 在 packages/web/）
+git tag desktop-v0.1.0 && git push origin desktop-v0.1.0
 ```
 
-在 Vercel Dashboard → Settings → Environment Variables 添加：
+## extractor/ — 音频提取 CLI
+
+纯 Rust 编译，单文件可执行，跨平台。从媒体文件提取 16kHz 单声道 WAV。
+
+### 构建
+
+```bash
+cd extractor && cargo build --release
+```
+
+### 使用
+
+```bash
+subextract video.mp4 -o ./output
+subextract a.mp4 b.mkv c.ts -o ./output
+subextract video.mp4 -d 120 -o ./output  # 只提取前 120 秒
+```
+
+## packages/web — Web 前端
+
+云端运行，调用 ASR / 翻译 API。适合 Vercel 部署。
+
+```bash
+cp packages/web/.env.example packages/web/.env.local
+# 编辑 .env.local 填入 API Key
+pnpm dev:web
+```
 
 | 变量名 | 说明 |
 |--------|------|
@@ -93,64 +82,13 @@ vercel deploy
 | `TENCENT_SECRET_ID` | 腾讯云 SecretId |
 | `TENCENT_SECRET_KEY` | 腾讯云 SecretKey |
 
-> Vercel Hobby 版 Function 超时 60s；处理长音频建议升级 Pro（300s）。`vercel.json` 已配置 `maxDuration: 300`。
+## 技术栈
 
-### 技术栈
-
-| 层 | 技术 |
-|----|------|
-| 框架 | Next.js 16（App Router） |
-| 语音识别 | 硅基流动 SenseVoice（`FunAudioLLM/SenseVoiceSmall`） |
-| 翻译 | 腾讯云机器翻译 `TextTranslateBatch` |
-| 字幕格式 | 自研 SRT 生成（`@subgen/shared`） |
-
----
-
-## server/ — Python CLI（本地离线）
-
-本地运行，使用 Whisper 模型离线识别，无需 API Key。dev 模式下作为 Next.js 的后端代理。
-
-### 安装依赖
-
-```bash
-# 安装 ffmpeg
-brew install ffmpeg          # macOS
-sudo apt install ffmpeg      # Ubuntu
-
-# 安装 Python 依赖
-cd server
-uv sync                      # 推荐
-# 或 pip install -e .
-```
-
-### 启动 API 服务（供 Next.js dev 模式使用）
-
-```bash
-cd server
-uvicorn api:app --reload --port 8000
-# FastAPI Swagger UI：http://localhost:8000/docs
-```
-
-### CLI 直接使用
-
-```bash
-cd server
-
-# 处理单个视频（日文 → 中文）
-python main.py video.mp4
-
-# 指定输出目录
-python main.py video.mp4 -o ./subtitles
-
-# 使用更大的 Whisper 模型
-python main.py video.mp4 --model large-v3
-
-# 韩文 → 中文
-python main.py video.mp4 --source ko --target zh-CN
-```
-
-### 输出文件
-
-- `video.ja.srt` — 原文字幕
-- `video.zh.srt` — 中文字幕
-- `video.bilingual.srt` — 双语字幕
+| 层 | 桌面版 | Web 版 |
+|----|--------|--------|
+| 框架 | Tauri v2 + Next.js 16 | Next.js 16 |
+| 语音识别 | whisper.cpp (server) / Groq / SiliconFlow | 硅基流动 SenseVoice |
+| 翻译 | DeepL / 腾讯云翻译 | 腾讯云翻译 |
+| 字幕 | Rust SRT 生成 | TypeScript SRT (shared) |
+| 音频提取 | ffmpeg (内置) | ffmpeg (系统) |
+| CI/CD | GitHub Actions + tauri-action | Vercel |

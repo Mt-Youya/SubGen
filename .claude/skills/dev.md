@@ -1,40 +1,51 @@
 ---
 name: dev
-description: 启动 SubGen 完整本地开发环境（Python API + Next.js Web）
+description: 启动 SubGen 开发环境（Web 前端 / Tauri 桌面应用 / extractor CLI）
 ---
 
-SubGen 本地开发需要同时运行两个服务。
+SubGen 支持三种开发模式。
 
-## 启动步骤
-
-**步骤 1：启动 Python 后端**（供 Next.js dev 模式转发用）
+## Tauri 桌面应用（主开发模式）
 
 ```bash
-cd server && uvicorn api:app --reload --port 8000
+pnpm dev:desktop
+# 或
+cd packages/desktop && pnpm dev
 ```
 
-**步骤 2：启动 Next.js 前端**
+- Rust 后端：自动编译（`cargo run`）
+- Next.js 前端：http://localhost:3001
+- 首次启动需授权安装 ffmpeg + Whisper 模型（UI 引导）
+- 依赖：`publish/whisper-cli.exe` + `publish/ffmpeg.exe`（由 CI 下载或手动放入 `resources/`）
+
+## Web 前端（独立 Next.js）
 
 ```bash
-pnpm --filter web dev
+pnpm dev:web
+# 或
+cd packages/web && pnpm dev
 ```
 
-或通过 `preview_start` 启动 dev server（已配置在 `.claude/launch.json`）。
+> Web 模式调用云端 ASR/翻译 API，不走本地 Whisper。
+
+## Extractor CLI（纯 Rust）
+
+```bash
+cd extractor && cargo run --release -- input.mp4 -o ./output
+```
+
+跨平台媒体文件音频提取，发布流程见 `.github/workflows/build-extractor.yml`。
 
 ## 验证
 
-- Python API：http://localhost:8000/docs（FastAPI Swagger UI）
+- Tauri 桌面：窗口打开后访问 http://localhost:3001，或在应用内操作
 - Web 前端：http://localhost:3000
-
-> dev 模式下，`/api/transcribe` 会自动转发到 `localhost:8000`。生产模式直接调用硅基流动 + 腾讯翻译 API。
+- Extractor：`cd extractor && cargo run -- --help`
 
 ## 常见问题
 
-- **Python 依赖未安装**：`cd server && uv sync`（或 `pip install -e .`）
-- **端口占用**：`lsof -ti:8000 | xargs kill` 或 `lsof -ti:3000 | xargs kill`
-- **环境变量缺失**：检查 `packages/web/.env.local`，参考 `.env.example`
-- **ffmpeg 未安装**：`brew install ffmpeg`（Python 转录依赖）
-- **大文件无法上传**：浏览器无法加载超大文件到内存。用 `extractor/extract.py` 先提取音频，再上传 WAV 到 SubGen：
-  ```bash
-  python extractor/extract.py video.mp4 -d 120 -o ./audio
-  ```
+- **端口 3001 占用**：`taskkill /PID <pid> /F`（Win）或 `lsof -ti:3001 | xargs kill`
+- **whisper-cli / ffmpeg 未找到**：启动后 UI 会提示下载，或手动放到 `packages/desktop/src-tauri/resources/`
+- **Rust 编译失败（dlltool / gcc）**：需 `m2w64-binutils` + `m2w64-gcc`（conda），或切换到 MSVC 工具链
+- **cdylib 导出符号超限**：`Cargo.toml` 中 `crate-type` 只保留 `["staticlib", "rlib"]`
+- **Windows 链接 `GetHostNameW` 失败**：`.cargo/config.toml` 已配置 `rust-lld` 替代旧版 MinGW ld

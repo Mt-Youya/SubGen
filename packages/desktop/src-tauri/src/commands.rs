@@ -97,19 +97,21 @@ fn resolve_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
 
     // 1. Tauri resource 目录内置 ffmpeg（最优先，独立于系统环境）
     if let Ok(resource_path) = app.path().resource_dir() {
-        let bundled = resource_path.join(name);
-        if bundled.is_file() {
-            // 确保有执行权限
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = fs::metadata(&bundled) {
-                    let mut perms = meta.permissions();
-                    perms.set_mode(0o755);
-                    fs::set_permissions(&bundled, perms).ok();
+        // 检查根目录和 resources/ 子目录
+        for dir in [resource_path.clone(), resource_path.join("resources")] {
+            let bundled = dir.join(name);
+            if bundled.is_file() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = fs::metadata(&bundled) {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(0o755);
+                        fs::set_permissions(&bundled, perms).ok();
+                    }
                 }
+                return Ok(bundled);
             }
-            return Ok(bundled);
         }
     }
 
@@ -163,30 +165,41 @@ fn dirs_cache() -> PathBuf {
     PathBuf::from(base).join(".subgen_cache")
 }
 
-/// 获取内置 whisper-cli 路径
+/// 获取内置 whisper 二进制路径（server 优先，cli 兜底）
 fn resolve_whisper(app: &AppHandle) -> Result<PathBuf, String> {
     let name = if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" };
-    if let Ok(dir) = app.path().resource_dir() {
-        let p = dir.join(name);
-        if p.is_file() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = fs::metadata(&p) {
-                    let mut perms = meta.permissions();
-                    perms.set_mode(0o755);
-                    fs::set_permissions(&p, perms).ok();
+    resolve_binary(app, name)
+}
+
+/// 获取内置 whisper-server 路径
+fn resolve_whisper_server(app: &AppHandle) -> Result<PathBuf, String> {
+    let name = if cfg!(windows) { "whisper-server.exe" } else { "whisper-server" };
+    resolve_binary(app, name)
+}
+
+fn resolve_binary(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    if let Ok(resource_path) = app.path().resource_dir() {
+        for dir in [resource_path.clone(), resource_path.join("resources")] {
+            let p = dir.join(name);
+            if p.is_file() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = fs::metadata(&p) {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(0o755);
+                        fs::set_permissions(&p, perms).ok();
+                    }
                 }
+                return Ok(p);
             }
-            return Ok(p);
         }
     }
-    // fallback 到系统 PATH
     for dir in env::var("PATH").unwrap_or_default().split(':') {
         let p = PathBuf::from(dir).join(name);
         if p.is_file() { return Ok(p); }
     }
-    Err("未找到 whisper-cli，请重新安装 SubGen".to_string())
+    Err(format!("未找到 {name}，请重新安装 SubGen"))
 }
 
 /// 默认模型路径 ~/.subgen_cache/models/ggml-small.bin
@@ -194,8 +207,72 @@ fn default_model_path() -> PathBuf {
     dirs_cache().join("models").join("ggml-small.bin")
 }
 
-/// 用 whisper-cli 转录单个 WAV，返回 segments（并发安全）
-async fn transcribe_with_whisper(
+/// 用 whisper-server HTTP API 转录单个 WAV，返回 segments
+async fn transcribe_with_whisper_server(
+    client: &reqwest::Client,
+    server_port: u16,
+    wav: &Path,
+    language: &str,
+    time_offset: f64,
+) -> Result<Vec<Segment>, String> {
+    let audio = fs::read(wav).map_err(|e| format!("读取音频失败: {e}"))?;
+
+    let part = Part::bytes(audio)
+        .file_name("audio.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| format!("构造上传分片失败: {e}"))?;
+    let form = Form::new()
+        .part("file", part)
+        .text("language", language.to_string())
+        .text("response_format", "verbose_json");
+
+    let res = client
+        .post(format!("http://127.0.0.1:{server_port}/inference"))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("whisper-server 请求失败: {e}"))?;
+
+    if !res.status().is_success() {
+        let body = res.text().await.unwrap_or_default();
+        return Err(format!("whisper-server 错误: {body}"));
+    }
+
+    let data: Value = res.json().await.map_err(|e| format!("解析响应失败: {e}"))?;
+
+    let segs: Vec<Segment> = data
+        .get("segments")
+        .and_then(|s| s.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| {
+                    let text = s.get("text")?.as_str()?.trim().to_string();
+                    if text.is_empty() { return None; }
+                    Some(Segment {
+                        start: s.get("start")?.as_f64()? + time_offset,
+                        end: s.get("end")?.as_f64()? + time_offset,
+                        text,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // 没有 segments 时 fallback 到整体 text
+    if segs.is_empty() {
+        if let Some(text) = data.get("text").and_then(|t| t.as_str()) {
+            let text = text.trim().to_string();
+            if !text.is_empty() {
+                return Ok(vec![Segment { start: time_offset, end: time_offset + 240.0, text }]);
+            }
+        }
+    }
+
+    Ok(segs)
+}
+
+/// 用 whisper-cli 命令行转录（兜底，每 chunk 启动独立进程）
+async fn transcribe_with_whisper_legacy(
     whisper: &Path,
     model: &Path,
     wav: &Path,
@@ -208,8 +285,6 @@ async fn transcribe_with_whisper(
     let language = language.to_string();
 
     tokio::task::spawn_blocking(move || {
-        // whisper-cli 输出 SRT 到 stdout
-        // 用 -of 明确指定输出前缀，避免写权限问题
         let srt_prefix = wav.with_extension("");
         let srt_path = wav.with_extension("srt");
 
@@ -218,9 +293,9 @@ async fn transcribe_with_whisper(
                 "-m", &model.to_string_lossy(),
                 "-f", &wav.to_string_lossy(),
                 "-l", &language,
-                "-osrt",                              // 生成 SRT
-                "-of", &srt_prefix.to_string_lossy(), // 明确输出路径前缀
-                "-np",                                // 不打印额外信息
+                "-osrt",
+                "-of", &srt_prefix.to_string_lossy(),
+                "-np",
             ])
             .output()
             .map_err(|e| format!("whisper-cli 执行失败: {e}"))?;
@@ -234,16 +309,13 @@ async fn transcribe_with_whisper(
         if !srt_path.exists() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(format!(
-                "whisper-cli 未生成 SRT 文件: {}\nstderr: {}\nstdout: {}",
-                srt_path.display(), stderr, stdout
-            ));
+            return Err(format!("whisper-cli 未生成 SRT 文件: {}\nstderr: {}\nstdout: {}",
+                srt_path.display(), stderr, stdout));
         }
 
         let srt = fs::read_to_string(&srt_path)
             .map_err(|e| format!("读取 SRT 失败: {e}"))?;
         fs::remove_file(&srt_path).ok();
-
         parse_srt_to_segments(&srt, time_offset)
     })
     .await
@@ -1262,48 +1334,117 @@ pub async fn generate_subtitles(
         let total = chunks.len();
 
         let segs = if opts.asr_provider == "local-whisper" {
-            // ── 本地 whisper-cli，信号量限流并发（Metal GPU unified memory）──
-            // 实测单实例 ~823MB，GPU 推荐工作集 17GB，保守取 4 并发
-            let whisper = resolve_whisper(&app)?;
+            // ── 本地 whisper-server 模式（模型常驻，HTTP 并发请求）──
+            let server_bin = resolve_whisper_server(&app)
+                .or_else(|_| resolve_whisper(&app))?; // 兜底：没有 server 就用 cli
             let model = default_model_path();
             if !model.exists() {
                 return Err("请先下载 Whisper 模型（在设置中点击下载）".to_string());
             }
 
-            let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
-            let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let mut handles = Vec::new();
+            let use_server = server_bin
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.contains("server"))
+                .unwrap_or(false);
 
-            for (i, chunk) in chunks.iter().enumerate() {
-                let whisper = whisper.clone();
-                let model = model.clone();
-                let chunk = chunk.clone();
-                let lang = opts.source_lang.clone();
-                let offset = i as f64 * chunk_seconds as f64;
-                let sem = sem.clone();
-                let done_count = done_count.clone();
-                let app = app.clone();
-                handles.push(tokio::spawn(async move {
-                    let _permit = sem.acquire().await.unwrap();
-                    let result = transcribe_with_whisper(&whisper, &model, &chunk, &lang, offset).await;
-                    let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                    emit_progress(&app, "transcribing",
-                        0.1 + 0.55 * (done as f64 / total as f64),
-                        format!("转录完成 {done}/{total}"));
-                    result.map(|s| (i, s))
-                }));
-            }
+            if use_server {
+                // ── whisper-server HTTP 模式 ──
+                let port: u16 = 18200;
+                let mut server = Command::new(&server_bin)
+                    .args(["-m", &model.to_string_lossy(), "--port", &port.to_string()])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .map_err(|e| format!("启动 whisper-server 失败: {e}"))?;
 
-            let mut results = Vec::new();
-            for h in handles {
-                match h.await {
-                    Ok(Ok(r)) => results.push(r),
-                    Ok(Err(e)) => return Err(e),
-                    Err(e) => return Err(format!("转录任务崩溃: {e}")),
+                // 等待 server 就绪（最多 30 秒）
+                let start = std::time::Instant::now();
+                let client = reqwest::Client::new();
+                loop {
+                    if start.elapsed().as_secs() > 30 {
+                        server.kill().ok();
+                        return Err("whisper-server 启动超时".to_string());
+                    }
+                    if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
+
+                // 并发处理所有 chunk（permit 数提高，因为 server 不重复加载模型）
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+                let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let mut handles = Vec::new();
+
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let client = client.clone();
+                    let chunk = chunk.clone();
+                    let lang = opts.source_lang.clone();
+                    let offset = i as f64 * chunk_seconds as f64;
+                    let sem = sem.clone();
+                    let done_count = done_count.clone();
+                    let app = app.clone();
+                    handles.push(tokio::spawn(async move {
+                        let _permit = sem.acquire().await.unwrap();
+                        let result = transcribe_with_whisper_server(&client, port, &chunk, &lang, offset).await;
+                        let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        emit_progress(&app, "transcribing",
+                            0.1 + 0.55 * (done as f64 / total as f64),
+                            format!("转录完成 {done}/{total}"));
+                        result.map(|s| (i, s))
+                    }));
+                }
+
+                let mut results = Vec::new();
+                for h in handles {
+                    match h.await {
+                        Ok(Ok(r)) => results.push(r),
+                        Ok(Err(e)) => { server.kill().ok(); return Err(e); }
+                        Err(e) => { server.kill().ok(); return Err(format!("转录任务崩溃: {e}")); }
+                    }
+                }
+                server.kill().ok();
+                results.sort_by_key(|(i, _)| *i);
+                results.into_iter().flat_map(|(_, s)| s).collect::<Vec<_>>()
+            } else {
+                // ── 兜底：whisper-cli 模式（每 chunk 独立进程）──
+                let whisper = server_bin;
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+                let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let mut handles = Vec::new();
+
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let whisper = whisper.clone();
+                    let model = model.clone();
+                    let chunk = chunk.clone();
+                    let lang = opts.source_lang.clone();
+                    let offset = i as f64 * chunk_seconds as f64;
+                    let sem = sem.clone();
+                    let done_count = done_count.clone();
+                    let app = app.clone();
+                    handles.push(tokio::spawn(async move {
+                        let _permit = sem.acquire().await.unwrap();
+                        let result = transcribe_with_whisper_legacy(&whisper, &model, &chunk, &lang, offset).await;
+                        let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        emit_progress(&app, "transcribing",
+                            0.1 + 0.55 * (done as f64 / total as f64),
+                            format!("转录完成 {done}/{total}"));
+                        result.map(|s| (i, s))
+                    }));
+                }
+
+                let mut results = Vec::new();
+                for h in handles {
+                    match h.await {
+                        Ok(Ok(r)) => results.push(r),
+                        Ok(Err(e)) => return Err(e),
+                        Err(e) => return Err(format!("转录任务崩溃: {e}")),
+                    }
+                }
+                results.sort_by_key(|(i, _)| *i);
+                results.into_iter().flat_map(|(_, s)| s).collect::<Vec<_>>()
             }
-            results.sort_by_key(|(i, _)| *i);
-            results.into_iter().flat_map(|(_, s)| s).collect::<Vec<_>>()
         } else {
             // ── 云 API 转录（Groq / SiliconFlow）并发 ──────────────
             let client_ref = reqwest::Client::new();

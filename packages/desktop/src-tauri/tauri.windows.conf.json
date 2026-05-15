@@ -1,11 +1,13 @@
 {
   "bundle": {
     "resources": {
-      "whisper-cli.exe": "whisper-cli.exe",
-      "whisper.dll": "whisper.dll",
-      "ggml.dll": "ggml.dll",
-      "ggml-base.dll": "ggml-base.dll",
-      "ggml-cpu.dll": "ggml-cpu.dll"
+      "resources/whisper-server.exe": "whisper-server.exe",
+      "resources/whisper-cli.exe": "whisper-cli.exe",
+      "resources/whisper.dll": "whisper.dll",
+      "resources/ggml.dll": "ggml.dll",
+      "resources/ggml-base.dll": "ggml-base.dll",
+      "resources/ggml-cpu.dll": "ggml-cpu.dll",
+      "resources/ffmpeg.exe": "ffmpeg.exe"
     }
   }
 }
