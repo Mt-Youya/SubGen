@@ -24,7 +24,6 @@ fn bundled_ffmpeg_path() -> PathBuf {
 /// 检查 ffmpeg 是否在系统 PATH 中可用
 pub fn find_system_ffmpeg() -> Option<PathBuf> {
     let name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
-    // 先检查常见安装位置
     let extra_paths: &[&str] = if cfg!(windows) {
         &[
             "C:\\ffmpeg\\bin",
@@ -40,14 +39,13 @@ pub fn find_system_ffmpeg() -> Option<PathBuf> {
         ]
     };
 
-    // 先在 PATH 中查找
-    if let Ok(paths) = env::var("PATH") {
-        let sep = if cfg!(windows) { ';' } else { ':' };
-        for dir in paths.split(sep).chain(extra_paths.iter().copied()) {
-            let candidate = PathBuf::from(dir).join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
+    // PATH 目录 + 常见安装路径都检查（PATH 读取失败时仍检查 extra_paths）
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let path_str = env::var("PATH").unwrap_or_default();
+    for dir in path_str.split(sep).chain(extra_paths.iter().copied()) {
+        let candidate = PathBuf::from(dir).join(name);
+        if candidate.is_file() {
+            return Some(candidate);
         }
     }
 
@@ -148,24 +146,30 @@ fn extract_ffmpeg(archive: &std::path::Path, bin_dir: &std::path::Path) -> Resul
 
         fs::remove_dir_all(&temp_extract).ok();
     } else if cfg!(target_os = "linux") {
-        // Linux: tar.xz
+        // Linux: tar.xz，先解压到临时目录再查找 ffmpeg
+        let temp_extract = bin_dir.join("_extract");
+        if temp_extract.exists() {
+            fs::remove_dir_all(&temp_extract).ok();
+        }
+        fs::create_dir_all(&temp_extract)
+            .map_err(|e| format!("创建临时目录失败: {e}"))?;
+
         let status = Command::new("tar")
             .args([
                 "-xf",
                 &archive.to_string_lossy(),
                 "-C",
-                &bin_dir.to_string_lossy(),
-                "--strip-components=1",
-                "--wildcards",
-                "*/ffmpeg",
+                &temp_extract.to_string_lossy(),
             ])
             .status()
             .map_err(|e| format!("tar 解压失败: {e}"))?;
 
         if !status.success() {
-            // 备选：不带 strip 解压然后手动查找
             return Err("tar 解压失败".to_string());
         }
+
+        find_and_copy_exe(&temp_extract, "ffmpeg", bin_dir)?;
+        fs::remove_dir_all(&temp_extract).ok();
 
         // 确保可执行
         #[cfg(unix)]
@@ -255,23 +259,38 @@ fn find_and_copy_exe(
     Ok(())
 }
 
-/// 获取 ffmpeg 下载链接
-fn ffmpeg_download_url() -> &'static str {
+/// 获取 ffmpeg 下载链接（运行时检测架构）
+fn ffmpeg_download_url() -> String {
     if cfg!(windows) {
-        "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-    } else if cfg!(target_os = "linux") {
-        "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+        // BtbN 官方构建，支持 x64
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip".to_string()
+    } else if cfg!(target_os = "macos") {
+        // BtbN macOS 构建
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-macos64-gpl.zip".to_string()
     } else {
-        // macOS
-        "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip"
+        // Linux：运行时检测 CPU 架构
+        let arch = std::process::Command::new("uname")
+            .arg("-m")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .unwrap_or_default();
+        let arch = arch.trim();
+        match arch {
+            "aarch64" | "arm64" => {
+                "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz".to_string()
+            }
+            _ => {
+                // 默认 amd64（x86_64）
+                "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz".to_string()
+            }
+        }
     }
 }
 
 /// 获取归档文件扩展名
 fn archive_ext() -> &'static str {
-    if cfg!(windows) {
-        "zip"
-    } else if cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") {
         "tar.xz"
     } else {
         "zip"
@@ -294,7 +313,7 @@ pub fn download_ffmpeg() -> Result<PathBuf, String> {
         fs::remove_file(&archive_path).ok();
     }
 
-    download(url, &archive_path)?;
+    download(&url, &archive_path)?;
 
     eprintln!("下载完成，正在解压...");
     extract_ffmpeg(&archive_path, &bin_dir)?;
