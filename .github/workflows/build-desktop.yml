@@ -53,11 +53,13 @@ jobs:
           mkdir -p packages/desktop/src-tauri/resources
           cp /opt/homebrew/bin/whisper-cli packages/desktop/src-tauri/resources/
           cp /opt/homebrew/bin/whisper-server packages/desktop/src-tauri/resources/
-          cp /opt/homebrew/Cellar/whisper-cpp/$(ls /opt/homebrew/Cellar/whisper-cpp)/lib/libwhisper.*.dylib \
+          # 用 find 精确找到 realpath，避免通配符匹配多个文件
+          WHISPER_VER=$(ls /opt/homebrew/Cellar/whisper-cpp)
+          cp "$(find /opt/homebrew/Cellar/whisper-cpp/$WHISPER_VER/lib -name 'libwhisper.*.dylib' | head -1)" \
              packages/desktop/src-tauri/resources/libwhisper.1.dylib
-          cp /opt/homebrew/opt/ggml/lib/libggml.*.dylib \
+          cp "$(find /opt/homebrew/opt/ggml/lib -name 'libggml.0.*.dylib' | head -1)" \
              packages/desktop/src-tauri/resources/libggml.0.dylib
-          cp /opt/homebrew/opt/ggml/lib/libggml-base.*.dylib \
+          cp "$(find /opt/homebrew/opt/ggml/lib -name 'libggml-base.0.*.dylib' | head -1)" \
              packages/desktop/src-tauri/resources/libggml-base.0.dylib
           # 修改 rpath 为相对路径
           for bin in whisper-cli whisper-server; do
@@ -112,8 +114,6 @@ jobs:
           chmod +x ../packages/desktop/src-tauri/resources/whisper-server ../packages/desktop/src-tauri/resources/whisper-cli
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - name: Install dependencies
         run: pnpm install
