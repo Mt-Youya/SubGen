@@ -86,7 +86,14 @@ export async function processSingleFile(
   }
 
   // ── 并行上传每片 ──
-  onProgress({ status: "uploading", uploadLabel: chunks.length > 1 ? `上传 ${chunks.length} 片...` : "上传中..." });
+  let doneChunks = 0;
+  const totalChunks = chunks.length;
+  const uploadStatus = () =>
+    totalChunks > 1
+      ? `上传中 ${doneChunks}/${totalChunks} 片...`
+      : "上传中...";
+
+  onProgress({ status: "uploading", uploadLabel: uploadStatus() });
 
   const uploadChunk = async (i: number) => {
     if (signal?.aborted) throw new Error("已取消");
@@ -110,12 +117,16 @@ export async function processSingleFile(
 
     if (data.task_id) {
       const taskResult = await pollTask(data.task_id, signal);
+      doneChunks++;
+      onProgress({ status: "uploading", uploadLabel: uploadStatus() });
       return (taskResult.segments ?? []).map((s) => ({
         ...s,
         start: s.start + startTime,
         end: s.end + startTime,
       }));
     }
+    doneChunks++;
+    onProgress({ status: "uploading", uploadLabel: uploadStatus() });
     return (data.segments ?? []).map((s) => ({
       ...s,
       start: s.start + startTime,

@@ -179,7 +179,11 @@ fn num_cpus() -> usize {
 }
 
 fn dirs_cache() -> PathBuf {
-    let base = env::var("HOME").unwrap_or_else(|_| ".".into());
+    let base = if cfg!(windows) {
+        env::var("USERPROFILE").or_else(|_| env::var("APPDATA")).unwrap_or_else(|_| ".".into())
+    } else {
+        env::var("HOME").unwrap_or_else(|_| ".".into())
+    };
     PathBuf::from(base).join(".subgen_cache")
 }
 
@@ -213,7 +217,8 @@ fn resolve_binary(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
             }
         }
     }
-    for dir in env::var("PATH").unwrap_or_default().split(':') {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    for dir in env::var("PATH").unwrap_or_default().split(sep) {
         let p = PathBuf::from(dir).join(name);
         if p.is_file() { return Ok(p); }
     }
@@ -389,13 +394,16 @@ fn parse_srt_time(s: &str) -> f64 {
 pub fn check_dependencies(app: AppHandle) -> serde_json::Value {
     let ffmpeg_ok = resolve_ffmpeg(&app).is_ok();
     let whisper_ok = resolve_whisper(&app).is_ok();
-    let model_path = default_model_path();
-    let model_ok = model_path.exists();
+    // 只要有任意一个模型就算 ok，避免用户下载了非默认模型时误报缺失
+    let any_model = ["base", "small", "medium", "large-v3"]
+        .iter()
+        .any(|m| model_path(m).exists());
+    let default_mp = default_model_path();
     serde_json::json!({
         "ffmpeg": ffmpeg_ok,
         "whisper": whisper_ok,
-        "model": model_ok,
-        "model_path": model_path.to_string_lossy()
+        "model": any_model,
+        "model_path": default_mp.to_string_lossy()
     })
 }
 
@@ -406,7 +414,7 @@ pub fn check_whisper_model(app: AppHandle, model: Option<String>) -> serde_json:
     let name = model.as_deref().unwrap_or("small");
     let mp = model_path(name);
     // 返回所有模型的下载状态
-    let models = ["tiny","base","small","medium","large-v3"].iter().map(|m| {
+    let models = ["base","small","medium","large-v3"].iter().map(|m| {
         let p = model_path(m);
         serde_json::json!({"name": m, "downloaded": p.exists(), "path": p.to_string_lossy()})
     }).collect::<Vec<_>>();
@@ -420,9 +428,15 @@ pub fn check_whisper_model(app: AppHandle, model: Option<String>) -> serde_json:
 
 /// 下载指定模型到 ~/.subgen_cache/models/
 #[tauri::command]
-pub async fn download_whisper_model(model: Option<String>) -> Result<String, String> {
-    let name = model.as_deref().unwrap_or("small");
-    let model_path = model_path(name);
+pub async fn download_whisper_model(
+    app: AppHandle,
+    model: Option<String>,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+    use std::io::Write;
+
+    let name = model.as_deref().unwrap_or("small").to_string();
+    let model_path = model_path(&name);
     if model_path.exists() {
         return Ok(model_path.to_string_lossy().to_string());
     }
@@ -433,18 +447,44 @@ pub async fn download_whisper_model(model: Option<String>) -> Result<String, Str
         "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin"
     );
 
-    let status = silent_command("curl")
-        .args(["-L", "--progress-bar", "-o"])
-        .arg(&model_path)
-        .arg(&url)
-        .status()
-        .map_err(|e| format!("curl 不可用: {e}"))?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
 
-    if !status.success() {
-        fs::remove_file(&model_path).ok();
-        return Err("模型下载失败，请检查网络".to_string());
+    if !resp.status().is_success() {
+        return Err(format!("下载失败: HTTP {}", resp.status()));
     }
+
+    let total = resp.content_length().unwrap_or(0);
+    let tmp_path = model_path.with_extension("bin.tmp");
+    let mut file = fs::File::create(&tmp_path).map_err(|e| format!("创建文件失败: {e}"))?;
+    let mut downloaded: u64 = 0;
+    let mut stream = resp.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("下载中断: {e}"))?;
+        file.write_all(&chunk).map_err(|e| format!("写入失败: {e}"))?;
+        downloaded += chunk.len() as u64;
+        let ratio = if total > 0 { downloaded as f64 / total as f64 } else { 0.0 };
+        app.emit("model-download-progress", serde_json::json!({ "model": name, "ratio": ratio })).ok();
+    }
+
+    drop(file);
+    fs::rename(&tmp_path, &model_path).map_err(|e| format!("重命名失败: {e}"))?;
+    app.emit("model-download-progress", serde_json::json!({ "model": name, "ratio": 1.0 })).ok();
     Ok(model_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn delete_whisper_model(model: String) -> Result<(), String> {
+    let path = model_path(&model);
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("删除失败: {e}"))?;
+    }
+    Ok(())
 }
 
 fn file_stem(path: &Path) -> String {
@@ -501,53 +541,84 @@ fn merge_bilingual(original: &[Segment], translated: &[Segment]) -> String {
         .join("\n")
 }
 
-fn split_audio_for_asr(
+async fn split_audio_for_asr(
     app: &AppHandle,
     input: &Path,
     chunk_dir: &Path,
     chunk_seconds: u32,
 ) -> Result<Vec<PathBuf>, String> {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
     let ffmpeg = resolve_ffmpeg(app)?;
     fs::create_dir_all(chunk_dir).map_err(|e| format!("创建临时目录失败: {e}"))?;
     let output_pattern = chunk_dir.join("chunk_%05d.wav");
 
-    let status = silent_command(ffmpeg)
-        .args(["-y", "-hide_banner", "-loglevel", "error"])
-        .arg("-i")
-        .arg(input)
-        .arg("-vn")
-        .arg("-acodec")
-        .arg("pcm_s16le")
-        .arg("-ar")
-        .arg("16000")
-        .arg("-ac")
-        .arg("1")
-        .arg("-f")
-        .arg("segment")
-        .arg("-segment_time")
-        .arg(chunk_seconds.to_string())
-        .arg("-reset_timestamps")
-        .arg("1")
-        .arg(output_pattern)
-        .status()
-        .map_err(|e| format!("ffmpeg 分片失败: {e}"))?;
+    let app_clone = app.clone();
+    let input = input.to_path_buf();
+    let output_pattern = output_pattern.clone();
 
-    if !status.success() {
-        return Err(format!("ffmpeg 分片返回错误: {status}"));
-    }
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = silent_command(&ffmpeg);
+        cmd.args(["-y", "-hide_banner", "-loglevel", "quiet"])
+            .arg("-i").arg(&input)
+            .arg("-vn")
+            .arg("-acodec").arg("pcm_s16le")
+            .arg("-ar").arg("16000")
+            .arg("-ac").arg("1")
+            .arg("-progress").arg("pipe:1")
+            .arg("-nostats")
+            .arg("-f").arg("segment")
+            .arg("-segment_time").arg(chunk_seconds.to_string())
+            .arg("-reset_timestamps").arg("1")
+            .arg(&output_pattern)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
 
-    let mut chunks = fs::read_dir(chunk_dir)
-        .map_err(|e| format!("读取临时分片失败: {e}"))?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("wav"))
-        .collect::<Vec<_>>();
-    chunks.sort();
+        let mut child = cmd.spawn()
+            .map_err(|e| format!("ffmpeg 分片启动失败: {e}"))?;
 
-    if chunks.is_empty() {
-        return Err("未能从媒体文件提取到音频".to_string());
-    }
+        let stdout = child.stdout.take().unwrap();
+        let reader = BufReader::new(stdout);
 
-    Ok(chunks)
+        let mut total_us: f64 = 0.0;
+        for line in reader.lines().map_while(Result::ok) {
+            if let Some(val) = line.strip_prefix("duration=") {
+                if let Ok(us) = val.trim().parse::<f64>() {
+                    if us > 0.0 { total_us = us; }
+                }
+            } else if let Some(val) = line.strip_prefix("out_time_us=") {
+                if let Ok(us) = val.trim().parse::<f64>() {
+                    let ratio = if total_us > 0.0 { (us / total_us).min(0.95) } else { 0.3 };
+                    emit_progress(&app_clone, "extracting", ratio * 0.3,
+                        format!("提取音频 {:.0}%", ratio * 100.0));
+                }
+            }
+        }
+
+        let status = child.wait()
+            .map_err(|e| format!("ffmpeg 等待失败: {e}"))?;
+
+        if !status.success() {
+            return Err(format!("ffmpeg 分片返回错误: {status}"));
+        }
+
+        let chunk_dir = output_pattern.parent().unwrap();
+        let mut chunks = fs::read_dir(chunk_dir)
+            .map_err(|e| format!("读取临时分片失败: {e}"))?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("wav"))
+            .collect::<Vec<_>>();
+        chunks.sort();
+
+        if chunks.is_empty() {
+            return Err("未能从媒体文件提取到音频".to_string());
+        }
+
+        Ok(chunks)
+    })
+    .await
+    .map_err(|e| format!("音频提取任务异常: {e}"))?
 }
 
 async fn transcribe_with_groq(
@@ -812,7 +883,7 @@ fn sign_tencent(secret_id: &str, secret_key: &str, body: &str) -> Vec<(String, S
     ]
 }
 
-/// 单批翻译，带重试 + 兜底（失败返回原文）
+/// 单批翻译，带重试，失败返回 Err（附带具体错误信息）
 async fn translate_batch_tencent(
     client: &reqwest::Client,
     texts: Vec<String>,
@@ -820,13 +891,15 @@ async fn translate_batch_tencent(
     tgt: &str,
     secret_id: &str,
     secret_key: &str,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     let body = json!({
         "SourceTextList": texts,
         "Source": src,
         "Target": tgt,
         "ProjectId": 0
     }).to_string();
+
+    let mut last_err = String::from("未知错误");
 
     for attempt in 0u32..4 {
         if attempt > 0 {
@@ -838,31 +911,36 @@ async fn translate_batch_tencent(
         }
         let res = match req.send().await {
             Ok(r) => r,
-            Err(_) => continue,
+            Err(e) => { last_err = format!("网络请求失败: {e}"); continue; }
         };
-        if !res.status().is_success() { continue; }
+        if !res.status().is_success() {
+            last_err = format!("HTTP {}", res.status());
+            continue;
+        }
         let data: Value = match res.json().await {
             Ok(d) => d,
-            Err(_) => continue,
+            Err(e) => { last_err = format!("响应解析失败: {e}"); continue; }
         };
         if let Some(error) = data.pointer("/Response/Error") {
             let code = error.get("Code").and_then(Value::as_str).unwrap_or("");
-            // 可重试的错误：InternalError / RequestLimitExceeded
+            let msg  = error.get("Message").and_then(Value::as_str).unwrap_or("");
+            last_err = format!("腾讯翻译 API 错误 [{code}]: {msg}");
+            // 可重试
             if code.contains("Internal") || code.contains("LimitExceeded") { continue; }
-            // 不可重试，兜底返回原文
-            break;
+            // 不可重试（如鉴权失败），直接返回错误
+            return Err(last_err);
         }
         if let Some(arr) = data.pointer("/Response/TargetTextList").and_then(Value::as_array) {
             let result: Vec<String> = arr.iter()
                 .map(|v| v.as_str().unwrap_or("").to_string())
                 .collect();
             if result.len() == texts.len() {
-                return result;
+                return Ok(result);
             }
+            last_err = format!("返回条数不匹配（期望 {}，实际 {}）", texts.len(), result.len());
         }
     }
-    // 所有重试失败 → 兜底：返回原文
-    texts
+    Err(format!("翻译失败（重试 4 次）: {last_err}"))
 }
 
 async fn translate_with_tencent(
@@ -924,36 +1002,16 @@ async fn translate_with_tencent(
         batches.push((cur_start, cur_texts));
     }
 
-    // ── 并发翻译所有批次 ─────────────────────────────────────
-    let src = std::sync::Arc::new(src);
-    let tgt = std::sync::Arc::new(tgt);
-    let secret_id = std::sync::Arc::new(secret_id.to_string());
-    let secret_key = std::sync::Arc::new(secret_key.to_string());
-
-    let mut handles = Vec::new();
-    for (start_idx, texts) in batches {
-        let client = client.clone();
-        let src = src.clone();
-        let tgt = tgt.clone();
-        let sid = secret_id.clone();
-        let skey = secret_key.clone();
-        handles.push(tokio::spawn(async move {
-            let result = translate_batch_tencent(&client, texts.clone(), &src, &tgt, &sid, &skey).await;
-            (start_idx, texts, result)
-        }));
-    }
-
+    // ── 串行翻译（避免超过腾讯 API 每秒 5 次限制），批次间隔 250ms ──
     let mut translated = vec![String::new(); segments.len()];
-    for handle in handles {
-        let (start_idx, originals, result) = handle.await.map_err(|e| format!("翻译任务异常: {e}"))?;
+    for (batch_no, (start_idx, texts)) in batches.into_iter().enumerate() {
+        if batch_no > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        let result = translate_batch_tencent(client, texts.clone(), &src, &tgt, secret_id, secret_key).await?;
         for (i, text) in result.into_iter().enumerate() {
             if start_idx + i < translated.len() {
-                // 兜底：空结果用原文
-                translated[start_idx + i] = if text.is_empty() {
-                    originals[i].clone()
-                } else {
-                    text
-                };
+                translated[start_idx + i] = if text.is_empty() { texts[i].clone() } else { text };
             }
         }
     }
@@ -1183,29 +1241,34 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
 
         handles.push(tokio::spawn(async move {
             let t_file = std::time::Instant::now();
-            // 先获取时长用于计算进度
-            let total_secs = get_duration(&ffmpeg, &input).unwrap_or(0.0);
 
             let stem = input.file_stem()
                 .and_then(|s| s.to_str()).unwrap_or("audio").to_string();
             let output = output_dir.join(format!("{stem}.wav"));
             let output_clone = output.clone();
             let ffmpeg_clone = ffmpeg.clone();
+            let input_clone = input.clone();
             let app_clone = app.clone();
 
-            // ffmpeg -progress 输出到 stdout pipe，实时读取进度
+            // 立即发出"分析中"事件，避免用户等待无响应
+            let _ = app_clone.emit("extract-progress", serde_json::json!({
+                "index": i, "total": total, "ratio": 0.01,
+                "message": format!("分析文件 {}/{}", i + 1, total),
+            }));
+
+            // 在 spawn_blocking 里执行 ffmpeg 提取，同时从 stderr 读时长
             let result = tokio::task::spawn_blocking(move || {
                 use std::io::{BufRead, BufReader};
                 use std::process::Stdio;
 
                 let mut cmd = silent_command(&ffmpeg_clone);
                 cmd.args(["-y", "-hide_banner", "-loglevel", "quiet"])
-                    .arg("-i").arg(&input)
+                    .arg("-i").arg(&input_clone)
                     .arg("-vn")
                     .arg("-acodec").arg("pcm_s16le")
                     .arg("-ar").arg("16000")
                     .arg("-ac").arg("1")
-                    .arg("-progress").arg("pipe:1")  // 进度写到 stdout
+                    .arg("-progress").arg("pipe:1")
                     .arg("-nostats");
 
                 if duration > 0.0 {
@@ -1216,23 +1279,33 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
                    .stdout(Stdio::piped())
                    .stderr(Stdio::null());
 
-
                 let mut child = cmd.spawn()
                     .map_err(|e| format!("ffmpeg 启动失败: {e}"))?;
 
                 let stdout = child.stdout.take().unwrap();
                 let reader = BufReader::new(stdout);
 
-                let max_secs = if duration > 0.0 { duration } else { total_secs };
-
+                // -progress 输出：duration= 是总时长(μs)，out_time_us= 是已处理时长
+                let mut total_us: f64 = 0.0;
+                let mut last_out_us: f64 = 0.0;
                 for line in reader.lines().map_while(Result::ok) {
-                    if let Some(val) = line.strip_prefix("out_time_us=") {
+                    if let Some(val) = line.strip_prefix("duration=") {
+                        let v = val.trim();
+                        if v != "N/A" {
+                            if let Ok(us) = v.parse::<f64>() {
+                                if us > 0.0 { total_us = us; }
+                            }
+                        }
+                    } else if let Some(val) = line.strip_prefix("out_time_us=") {
                         if let Ok(us) = val.trim().parse::<f64>() {
-                            let secs = us / 1_000_000.0;
-                            let ratio = if max_secs > 0.0 {
-                                (secs / max_secs).min(0.99)
+                            if us > 0.0 { last_out_us = us; }
+                            let max_us = if duration > 0.0 { duration * 1_000_000.0 } else { total_us };
+                            // total_us 未知时用脉冲动画（缓慢递增到 90% 兜底）
+                            let ratio = if max_us > 0.0 {
+                                (us / max_us).min(0.99)
                             } else {
-                                0.5
+                                // 无总时长：按已处理时长估算（每10分钟≈一般视频）
+                                (last_out_us / (600.0 * 1_000_000.0)).min(0.90)
                             };
                             let _ = app_clone.emit("extract-progress", serde_json::json!({
                                 "index": i,
@@ -1243,6 +1316,12 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
                         }
                     }
                 }
+
+                // stdout 读完说明 ffmpeg 即将结束，推 99% 避免长时间卡住
+                let _ = app_clone.emit("extract-progress", serde_json::json!({
+                    "index": i, "total": total, "ratio": 0.99,
+                    "message": format!("收尾 {}/{}", i + 1, total),
+                }));
 
                 let status = child.wait()
                     .map_err(|e| format!("ffmpeg 等待失败: {e}"))?;
@@ -1288,32 +1367,6 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
     Ok(ExtractResult { files })
 }
 
-/// 用 ffprobe/ffmpeg 获取媒体时长（秒）
-fn get_duration(ffmpeg: &Path, input: &Path) -> Option<f64> {
-    // 用 ffmpeg -i 读取时长
-    let output = silent_command(ffmpeg)
-        .args(["-i"])
-        .arg(input)
-        .args(["-f", "null", "-"])
-        .output()
-        .ok()?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    for line in stderr.lines() {
-        if line.contains("Duration:") {
-            // Duration: HH:MM:SS.ss
-            let part = line.split("Duration:").nth(1)?.trim();
-            let time = part.split(',').next()?.trim();
-            let parts: Vec<&str> = time.split(':').collect();
-            if parts.len() == 3 {
-                let h: f64 = parts[0].parse().ok()?;
-                let m: f64 = parts[1].parse().ok()?;
-                let s: f64 = parts[2].parse().ok()?;
-                return Some(h * 3600.0 + m * 60.0 + s);
-            }
-        }
-    }
-    None
-}
 
 #[tauri::command]
 pub async fn generate_subtitles(
@@ -1359,8 +1412,9 @@ pub async fn generate_subtitles(
         if skip_cache { fs::remove_file(&asr_cache_file).ok(); }
         let temp_dir = env::temp_dir().join(format!("subgen-desktop-{}", Utc::now().timestamp_millis()));
         let t_extract = std::time::Instant::now();
-        emit_progress(&app, "extracting", 0.05, "正在本地提取并分片音频...");
-        let chunks = split_audio_for_asr(&app, input, &temp_dir, chunk_seconds)?;
+        emit_progress(&app, "extracting", 0.02, "正在本地提取并分片音频...");
+        let chunks = split_audio_for_asr(&app, input, &temp_dir, chunk_seconds).await?;
+        emit_progress(&app, "extracting", 0.30, "音频提取完成，准备转录...");
         let total = chunks.len();
 
         let segs = if opts.asr_provider == "local-whisper" {
@@ -1380,51 +1434,72 @@ pub async fn generate_subtitles(
                 .unwrap_or(false);
 
             if use_server {
-                // ── whisper-server HTTP 模式 ──
-                let port: u16 = 18200;
-                emit_progress(&app, "loading_model", 0.08,
-                    format!("正在加载 Whisper 模型（{}）...", model_name));
-                let mut server = silent_command(&server_bin)
-                    .args([
-                        "-m", &model.to_string_lossy(),
-                        "--port", &port.to_string(),
-                        "-t", &num_cpus().to_string(), // 使用所有 CPU 核心
-                    ])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::piped())  // 收集 stderr 便于诊断
-                    .spawn()
-                    .map_err(|e| format!("启动 whisper-server 失败: {e}"))?;
+                // ── whisper-server 多实例并发模式 ──
+                // 实例数：根据内存估算，small=~800MB，以物理内存20%为上限，最少1最多4
+                let n_instances = {
+                    let cpus = num_cpus();
+                    // 每个 whisper-server 实例占用约 800MB GPU/unified memory
+                    // 保守取 min(cpus/2, 4)，避免 OOM
+                    (cpus / 2).max(1).min(4)
+                };
+                let base_port: u16 = 18200;
 
-                // 等待 server 就绪，每5秒更新一次进度提示
-                let start = std::time::Instant::now();
+                emit_progress(&app, "loading_model", 0.05,
+                    format!("正在启动 {} 个 Whisper 实例（{}）...", n_instances, model_name));
+
+                // 启动所有实例
+                let mut servers = Vec::new();
+                for idx in 0..n_instances {
+                    let port = base_port + idx as u16;
+                    let threads_per = (num_cpus() / n_instances).max(1);
+                    let srv = silent_command(&server_bin)
+                        .args([
+                            "-m", &model.to_string_lossy(),
+                            "--port", &port.to_string(),
+                            "-t", &threads_per.to_string(),
+                        ])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .map_err(|e| format!("启动 whisper-server 实例 {idx} 失败: {e}"))?;
+                    servers.push(srv);
+                }
+
+                // 等待所有实例就绪
                 let client = reqwest::Client::new();
+                let start = std::time::Instant::now();
+                let mut ready = vec![false; n_instances];
                 loop {
                     if start.elapsed().as_secs() > 120 {
-                        // 读取 stderr 帮助诊断
-                        let stderr_output = server.stderr.take().and_then(|mut s| {
-                            use std::io::Read;
-                            let mut buf = String::new();
-                            s.read_to_string(&mut buf).ok();
-                            Some(buf)
-                        }).unwrap_or_default();
-                        server.kill().ok();
-                        return Err(format!("whisper-server 启动超时（>120s）\nstderr: {}", &stderr_output[..stderr_output.len().min(500)]));
+                        for s in &mut servers { s.kill().ok(); }
+                        return Err("whisper-server 实例启动超时（>120s）".to_string());
                     }
-                    if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
-                        emit_progress(&app, "loading_model", 0.1, "模型加载完成，开始转录...");
+                    for (idx, r) in ready.iter_mut().enumerate() {
+                        if !*r {
+                            let port = base_port + idx as u16;
+                            if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
+                                *r = true;
+                            }
+                        }
+                    }
+                    let n_ready = ready.iter().filter(|&&r| r).count();
+                    if n_ready == n_instances {
+                        emit_progress(&app, "loading_model", 0.1,
+                            format!("全部 {} 个实例就绪，开始并发转录...", n_instances));
                         break;
                     }
                     let elapsed = start.elapsed().as_secs();
-                    // 每5秒更新一次等待提示
                     if elapsed % 5 == 0 && elapsed > 0 {
                         emit_progress(&app, "loading_model", 0.08,
-                            format!("正在加载模型... ({elapsed}s)"));
+                            format!("正在加载模型 {}/{} 就绪... ({elapsed}s)", n_ready, n_instances));
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 }
 
-                // 并发处理所有 chunk（permit 数提高，因为 server 不重复加载模型）
-                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+                // 并发转录：每个实例一个信号量，确保每个 server 同时只处理一个请求
+                let sems: Vec<_> = (0..n_instances)
+                    .map(|_| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
+                    .collect();
                 let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let mut handles = Vec::new();
 
@@ -1433,9 +1508,10 @@ pub async fn generate_subtitles(
                     let chunk = chunk.clone();
                     let lang = opts.source_lang.clone();
                     let offset = i as f64 * chunk_seconds as f64;
-                    let sem = sem.clone();
                     let done_count = done_count.clone();
                     let app = app.clone();
+                    let port = base_port + (i % n_instances) as u16;
+                    let sem = sems[i % n_instances].clone();
                     handles.push(tokio::spawn(async move {
                         let _permit = sem.acquire().await.unwrap();
                         let result = transcribe_with_whisper_server(&client, port, &chunk, &lang, offset).await;
@@ -1451,11 +1527,11 @@ pub async fn generate_subtitles(
                 for h in handles {
                     match h.await {
                         Ok(Ok(r)) => results.push(r),
-                        Ok(Err(e)) => { server.kill().ok(); return Err(e); }
-                        Err(e) => { server.kill().ok(); return Err(format!("转录任务崩溃: {e}")); }
+                        Ok(Err(e)) => { for s in &mut servers { s.kill().ok(); } return Err(e); }
+                        Err(e) => { for s in &mut servers { s.kill().ok(); } return Err(format!("转录任务崩溃: {e}")); }
                     }
                 }
-                server.kill().ok();
+                for s in &mut servers { s.kill().ok(); }
                 results.sort_by_key(|(i, _)| *i);
                 results.into_iter().flat_map(|(_, s)| s).collect::<Vec<_>>()
             } else {
@@ -1566,6 +1642,7 @@ pub async fn generate_subtitles(
     emit_progress(&app, "translating", 0.72, "正在翻译字幕...");
     let translated = translate_segments(&client, &segments, &opts, Some(&cache_dir)).await?;
     let trl_elapsed = t_translate.elapsed().as_secs_f64();
+
     emit_progress_with_elapsed(&app, "translating", 0.92,
         format!("翻译完成，用时 {:.0}s", trl_elapsed), Some(trl_elapsed));
 
@@ -1602,6 +1679,12 @@ pub async fn generate_subtitles(
         translated_path: translated_path.to_string_lossy().to_string(),
         bilingual_path: bilingual_path.map(|p| p.to_string_lossy().to_string()),
     })
+}
+
+/// 批量获取文件大小（字节），找不到返回 0
+#[tauri::command]
+pub fn get_file_sizes(paths: Vec<String>) -> Vec<u64> {
+    paths.iter().map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).collect()
 }
 
 /// 保存 SRT 内容到指定路径（用户选择后调用）

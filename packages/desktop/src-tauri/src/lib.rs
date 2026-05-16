@@ -16,7 +16,9 @@ pub fn run() {
             commands::download_ffmpeg,
             commands::check_whisper_model,
             commands::download_whisper_model,
+            commands::delete_whisper_model,
             commands::check_dependencies,
+            commands::get_file_sizes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

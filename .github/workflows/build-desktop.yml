@@ -80,14 +80,13 @@ jobs:
           rm -rf ffmpeg-mac ffmpeg-mac.zip
           chmod +x packages/desktop/src-tauri/resources/ffmpeg
           codesign --force --sign - packages/desktop/src-tauri/resources/ffmpeg || true
-          # 用 find 精确找到 realpath，避免通配符匹配多个文件
-          WHISPER_VER=$(ls /opt/homebrew/Cellar/whisper-cpp)
-          cp "$(find /opt/homebrew/Cellar/whisper-cpp/$WHISPER_VER/lib -name 'libwhisper.*.dylib' | head -1)" \
-             packages/desktop/src-tauri/resources/libwhisper.1.dylib
-          cp "$(find /opt/homebrew/opt/ggml/lib -name 'libggml.0.*.dylib' | head -1)" \
-             packages/desktop/src-tauri/resources/libggml.0.dylib
-          cp "$(find /opt/homebrew/opt/ggml/lib -name 'libggml-base.0.*.dylib' | head -1)" \
-             packages/desktop/src-tauri/resources/libggml-base.0.dylib
+          # 从二进制 otool -L 读取实际 dylib 路径，精确复制，不依赖版本号通配符
+          WHISPER_LIB=$(otool -L /opt/homebrew/bin/whisper-server | grep 'libwhisper' | awk '{print $1}')
+          GGML_LIB=$(otool -L /opt/homebrew/bin/whisper-server | grep 'libggml\.0\.' | awk '{print $1}')
+          GGML_BASE_LIB=$(otool -L /opt/homebrew/bin/whisper-server | grep 'libggml-base' | awk '{print $1}')
+          cp "$WHISPER_LIB"   packages/desktop/src-tauri/resources/libwhisper.1.dylib
+          cp "$GGML_LIB"      packages/desktop/src-tauri/resources/libggml.0.dylib
+          cp "$GGML_BASE_LIB" packages/desktop/src-tauri/resources/libggml-base.0.dylib
           # 修改 rpath 为相对路径
           for bin in whisper-cli whisper-server; do
             install_name_tool -change "@rpath/libwhisper.1.dylib" "@loader_path/libwhisper.1.dylib" \
@@ -118,10 +117,8 @@ jobs:
           Expand-Archive -Path whisper-tmp.zip -DestinationPath whisper-tmp -Force
           Copy-Item whisper-tmp/Release/whisper-server.exe packages/desktop/src-tauri/resources/
           Copy-Item whisper-tmp/Release/whisper-cli.exe packages/desktop/src-tauri/resources/
-          Copy-Item whisper-tmp/Release/whisper.dll packages/desktop/src-tauri/resources/
-          Copy-Item whisper-tmp/Release/ggml.dll packages/desktop/src-tauri/resources/
-          Copy-Item whisper-tmp/Release/ggml-base.dll packages/desktop/src-tauri/resources/
-          Copy-Item whisper-tmp/Release/ggml-cpu.dll packages/desktop/src-tauri/resources/
+          # 复制所有 dll（whisper.dll + ggml*.dll，兼容各版本）
+          Get-ChildItem whisper-tmp/Release/*.dll | Copy-Item -Destination packages/desktop/src-tauri/resources/
           Remove-Item -Recurse -Force whisper-tmp, whisper-tmp.zip
           # 下载 ffmpeg 静态编译版
           $ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
@@ -142,9 +139,10 @@ jobs:
           find ffmpeg-master-latest-linux64-gpl -name "ffmpeg" -type f | head -1 | xargs -I{} cp {} packages/desktop/src-tauri/resources/ffmpeg
           rm -rf ffmpeg-master-latest-linux64-gpl ffmpeg-linux.tar.xz
           chmod +x packages/desktop/src-tauri/resources/ffmpeg
-          # 从源码编译 whisper.cpp（Ubuntu 上没有预编译包）
+          # 从源码编译 whisper.cpp（锁定与 Windows/macOS 一致的版本）
           sudo apt-get install -y cmake build-essential
-          git clone --depth=1 https://github.com/ggerganov/whisper.cpp
+          WHISPER_TAG=$(curl -s "https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+          git clone --depth=1 --branch "$WHISPER_TAG" https://github.com/ggerganov/whisper.cpp
           cd whisper.cpp
           cmake -B build -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=ON
           cmake --build build --target whisper-server whisper-cli -j$(nproc)

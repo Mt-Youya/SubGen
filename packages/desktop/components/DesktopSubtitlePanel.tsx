@@ -2,11 +2,165 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+// ── 图标 ──────────────────────────────────────────────────
+function VideoIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function SrtIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="3" y1="5.5" x2="11" y2="5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="3" y1="8.5" x2="8" y2="8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// ── 下载行组件 ─────────────────────────────────────────────
+function DownloadRow({ icon, title, subtitle, onClick }: {
+  icon: React.ReactNode; title: string; subtitle: string; onClick: () => void;
+}) {
+  const [clicked, setClicked] = useState(false);
+  return (
+    <button
+      onClick={() => { onClick(); setClicked(true); setTimeout(() => setClicked(false), 2000); }}
+      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-all duration-150"
+      style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border-subtle)" }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)"; (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border-subtle)"; (e.currentTarget as HTMLElement).style.background = "var(--color-surface-2)"; }}
+    >
+      <span className="shrink-0" style={{ color: "var(--color-text-tertiary)" }}>{icon}</span>
+      <span className="text-xs font-medium" style={{ color: "var(--color-text-primary)" }}>{title}</span>
+      <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>· {subtitle}</span>
+      <span className="ml-auto transition-all duration-200" style={{ color: clicked ? "var(--color-success)" : "var(--color-text-tertiary)" }}>
+        {clicked ? (
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8l4 4 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <path d="M8 3v7M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M3 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        )}
+      </span>
+    </button>
+  );
+}
+
+// ── 横排下载 Chip ─────────────────────────────────────────
+function DownloadChip({ title, subtitle, onClick }: {
+  title: string; subtitle: string; onClick: () => void;
+}) {
+  const [clicked, setClicked] = useState(false);
+  return (
+    <button
+      onClick={() => { onClick(); setClicked(true); setTimeout(() => setClicked(false), 2000); }}
+      className="flex-1 flex flex-col items-center gap-0.5 py-2 rounded-lg transition-all duration-150"
+      style={{
+        background: clicked ? "var(--color-accent-muted)" : "var(--color-surface-3)",
+        border: `1px solid ${clicked ? "oklch(65% 0.22 265 / 30%)" : "transparent"}`,
+      }}
+      onMouseEnter={e => { if (!clicked) (e.currentTarget as HTMLElement).style.background = "var(--color-surface-1)"; }}
+      onMouseLeave={e => { if (!clicked) (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"; }}
+    >
+      {clicked ? (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ color: "var(--color-accent)" }}>
+          <path d="M3 8l4 4 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ color: "var(--color-text-tertiary)" }}>
+          <path d="M8 3v7M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M3 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      )}
+      <span className="text-xs font-medium" style={{ color: clicked ? "var(--color-accent)" : "var(--color-text-primary)" }}>{title}</span>
+      <span className="text-[10px]" style={{ color: "var(--color-text-tertiary)" }}>{subtitle}</span>
+    </button>
+  );
+}
+
+// ── 字幕预览 tabs + 列表 ───────────────────────────────────
+function SubtitlePreview({ result, sourceLang, targetLang }: {
+  result: GenerateResult; sourceLang: string; targetLang: string;
+}) {
+  const [tab, setTab] = useState<"original" | "translated" | "bilingual">("translated");
+  const items = tab === "translated"
+    ? result.translated.map(s => ({ primary: s.text, secondary: null as string | null }))
+    : tab === "bilingual"
+    ? result.segments.map((s, i) => ({ primary: s.text, secondary: result.translated[i]?.text ?? null }))
+    : result.segments.map(s => ({ primary: s.text, secondary: null as string | null }));
+
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--color-border-subtle)" }}>
+      <div className="px-4 py-2.5 flex items-center"
+        style={{ background: "var(--color-surface-1)", borderBottom: "1px solid var(--color-border-subtle)" }}>
+        <div className="flex items-center gap-1">
+          {(["original", "translated", "bilingual"] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className="px-2.5 py-1 rounded-lg text-xs transition-all duration-150"
+              style={{
+                background: tab === t ? "var(--color-surface-3)" : "transparent",
+                color: tab === t ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
+                fontWeight: tab === t ? 500 : 400,
+              }}>
+              {{ original: "原文", translated: "译文", bilingual: "双语" }[t]}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs ml-auto" style={{ color: "var(--color-text-tertiary)" }}>
+          共 {result.segments.length} 条
+        </span>
+      </div>
+      <div className="overflow-y-auto divide-y" style={{ maxHeight: "200px", background: "var(--color-surface-1)", borderColor: "var(--color-border-subtle)" } as React.CSSProperties}>
+        {items.slice(0, 10).map((item, i) => (
+          <div key={i} className="px-4 py-2.5 flex gap-3" style={{ borderColor: "var(--color-border-subtle)" }}>
+            <span className="text-xs tabular-nums shrink-0 pt-0.5" style={{ color: "var(--color-text-tertiary)" }}>{i + 1}</span>
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-sm" style={{ color: "var(--color-text-primary)" }}>{item.primary}</p>
+              {item.secondary && <p className="text-xs" style={{ color: "var(--color-text-secondary)" }}>{item.secondary}</p>}
+            </div>
+          </div>
+        ))}
+        {result.segments.length > 10 && (
+          <div className="px-4 py-2.5 text-xs text-center" style={{ color: "var(--color-text-tertiary)" }}>
+            ··· 剩余 {result.segments.length - 10} 条
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type AsrProvider = "groq" | "siliconflow" | "local-whisper";
 type TranslateProvider = "deepl" | "tencent";
 type Status = "idle" | "processing" | "done" | "error";
 
 interface ProgressPayload { stage: string; ratio: number; message: string; elapsed_secs?: number }
+
+// 阶段定义：与 Rust emit_progress 的 stage 字符串对应
+const PIPELINE_STEPS = [
+  { key: "extracting",   label: "提取音频", icon: "⚙" },
+  { key: "loading_model", label: "加载模型", icon: "⬇" },
+  { key: "transcribing", label: "语音识别", icon: "◎" },
+  { key: "translating",  label: "翻译字幕", icon: "↔" },
+  { key: "done",         label: "完成",     icon: "✓" },
+] as const;
+
+type PipelineStepKey = typeof PIPELINE_STEPS[number]["key"] | "starting";
+
+// 当前 stage 对应哪个 step 的索引（-1 = 未开始）
+function stageToStepIdx(stage: string): number {
+  if (stage === "done") return PIPELINE_STEPS.length - 1;
+  const idx = PIPELINE_STEPS.findIndex(s => s.key === stage);
+  return idx === -1 ? 0 : idx;
+}
 interface Segment { start: number; end: number; text: string }
 interface GenerateResult {
   segments: Segment[];
@@ -18,7 +172,7 @@ interface GenerateResult {
   translatedPath: string;
   bilingualPath: string | null;
 }
-type WhisperModel = "tiny" | "base" | "small" | "medium" | "large-v3";
+type WhisperModel = "base" | "small" | "medium" | "large-v3";
 
 interface Settings {
   asrProvider: AsrProvider;
@@ -47,7 +201,7 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 const WHISPER_MODELS: { name: WhisperModel; label: string; size: string }[] = [
-  { name: "tiny",     label: "Tiny",     size: "75MB"  },
+  // { name: "tiny",     label: "Tiny",     size: "75MB"  },
   { name: "base",     label: "Base",     size: "142MB" },
   { name: "small",    label: "Small",    size: "466MB" },
   { name: "medium",   label: "Medium",   size: "1.5GB" },
@@ -155,6 +309,148 @@ function CustomSelect<T extends string>({ value, onChange, options }: {
   );
 }
 
+// ── 模型选择下拉（含下载进度）────────────────────────────
+function ModelSelect({ value, onChange, downloadedModels, downloadingModel, downloadProgress, onDownload, onDelete }: {
+  value: WhisperModel;
+  onChange: (v: WhisperModel) => void;
+  downloadedModels: Set<WhisperModel>;
+  downloadingModel: WhisperModel | null;
+  downloadProgress: Record<string, number>;
+  onDownload: (m: WhisperModel) => void;
+  onDelete: (m: WhisperModel) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = WHISPER_MODELS.find(m => m.name === value);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const downloadingInfo = downloadingModel ? WHISPER_MODELS.find(m => m.name === downloadingModel) : null;
+  const downloadingPct = downloadingModel ? Math.round((downloadProgress[downloadingModel] ?? 0) * 100) : 0;
+
+  return (
+    <div ref={ref} className="relative w-full">
+      {/* 触发按钮 */}
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full relative overflow-hidden flex items-center justify-between rounded-lg px-3 py-2 text-sm text-left"
+        style={{
+          background: "var(--color-surface-2)",
+          border: `1px solid ${downloadingInfo && !open ? "var(--color-accent)" : "var(--color-border)"}`,
+          color: "var(--color-text-primary)",
+        }}
+      >
+        {/* 下载中时的进度填充背景 */}
+        {downloadingInfo && !open && (
+          <div className="absolute inset-0 pointer-events-none transition-all duration-300"
+            style={{ width: `${downloadingPct}%`, background: "oklch(50% 0.22 265 / 20%)" }} />
+        )}
+        <span className="relative flex items-center gap-2">
+          {downloadingInfo && !open ? (
+            <>
+              <span className="font-medium" style={{ color: "var(--color-accent)" }}>{downloadingInfo.label}</span>
+              <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{downloadingInfo.size}</span>
+              <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{downloadingPct}%</span>
+            </>
+          ) : (
+            <>
+              <span>{selected?.label}</span>
+              <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{selected?.size}</span>
+              {downloadedModels.has(value) && <span className="text-xs" style={{ color: "var(--color-success)" }}>✓</span>}
+            </>
+          )}
+        </span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+          style={{ color: "var(--color-text-tertiary)", transform: open ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.15s", flexShrink: 0 }}>
+          <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {/* 下拉列表 */}
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg"
+          style={{
+            background: "var(--color-surface-3)",
+            border: "1px solid var(--color-border)",
+            boxShadow: "0 8px 24px oklch(0% 0 0 / 40%)",
+            overflow: "hidden",
+          }}>
+          {WHISPER_MODELS.map((m) => {
+            const downloaded = downloadedModels.has(m.name);
+            const isDownloading = downloadingModel === m.name;
+            const pct = Math.round((downloadProgress[m.name] ?? 0) * 100);
+            const isSelected = m.name === value;
+
+            return (
+              <div key={m.name} className="relative">
+                {/* 进度填充背景：容器 overflow:hidden 负责裁剪圆角 */}
+                {isDownloading && (
+                  <div className="absolute inset-0 pointer-events-none transition-all duration-300"
+                    style={{ width: `${pct}%`, background: "oklch(50% 0.22 265 / 20%)" }} />
+                )}
+                <div className="relative flex items-center justify-between px-3 py-2">
+                  {/* 左侧：点击选择（仅已下载可选） */}
+                  <button
+                    type="button"
+                    disabled={!downloaded}
+                    onClick={() => { if (downloaded) { onChange(m.name); setOpen(false); } }}
+                    className="flex items-center gap-2 flex-1 text-left text-sm min-w-0"
+                    style={{
+                      color: isSelected ? "var(--color-accent)" : downloaded ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
+                      cursor: downloaded ? "pointer" : "default",
+                    }}
+                  >
+                    <span className="font-medium">{m.label}</span>
+                    <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{m.size}</span>
+                    {isDownloading && <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{pct}%</span>}
+                  </button>
+                  {/* 右侧操作区 */}
+                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                    {downloaded && !isDownloading && (
+                      <>
+                        <span className="text-xs" style={{ color: "var(--color-success)" }}>✓</span>
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); onDelete(m.name); }}
+                          className="p-1 rounded transition-opacity opacity-40 hover:opacity-100"
+                          style={{ color: "var(--color-text-tertiary)" }}
+                          title="删除模型"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                            <path d="M2 3h8M5 3V2h2v1M4.5 3l.5 6h2l.5-6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                      </>
+                    )}
+                    {!downloaded && (
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); onDownload(m.name); }}
+                        disabled={!!downloadingModel}
+                        className="rounded-full px-2.5 py-0.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                        style={{ background: "var(--color-accent)", color: "white" }}
+                      >
+                        {isDownloading ? "下载中" : "下载"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 布局辅助 ──────────────────────────────────────────────
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -190,9 +486,17 @@ function TextInput({ value, onChange, placeholder, type = "text", readOnly, onCl
   );
 }
 
+function formatBytes(b: number) {
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + " GB";
+  if (b >= 1048576)    return (b / 1048576).toFixed(1) + " MB";
+  if (b >= 1024)       return (b / 1024).toFixed(0) + " KB";
+  return b + " B";
+}
+
 // ── 每个文件的处理结果 ────────────────────────────────────
 interface FileTask {
   path: string;
+  size?: number;
   status: "pending" | "processing" | "done" | "error";
   progress: ProgressPayload;
   displayRatio: number;
@@ -213,14 +517,15 @@ export function DesktopSubtitlePanel() {
   // 多文件任务列表
   const [tasks, setTasks] = useState<FileTask[]>([]);
   const [isRunning, setIsRunning] = useState(false);
-  // 当前正在处理的文件进度（平滑插值）
-  const [displayRatio, setDisplayRatio] = useState(0);
-  const targetRatioRef = useRef(0);
+  // 每个文件的目标进度（path -> ratio），RAF 平滑插值到 task.displayRatio
+  const targetRatioRef = useRef<Record<string, number>>({});
   const rafRef = useRef<number>(0);
   const currentTaskRef = useRef<string>("");  // 当前处理文件路径
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelReady, setModelReady] = useState(false);
   const [downloadingModel, setDownloadingModel] = useState<WhisperModel | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [downloadedModels, setDownloadedModels] = useState<Set<WhisperModel>>(new Set());
   const initialized = useRef(false);
 
@@ -251,6 +556,18 @@ export function DesktopSubtitlePanel() {
       alert(`模型下载失败: ${e}`);
     } finally {
       setDownloadingModel(null);
+      setDownloadProgress(prev => { const next = { ...prev }; delete next[modelName]; return next; });
+    }
+  }, [settings.whisperModel]);
+
+  const deleteModel = useCallback(async (modelName: WhisperModel) => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("delete_whisper_model", { model: modelName });
+      setDownloadedModels(prev => { const next = new Set(prev); next.delete(modelName); return next; });
+      if (modelName === settings.whisperModel) setModelReady(false);
+    } catch (e) {
+      alert(`删除失败: ${e}`);
     }
   }, [settings.whisperModel]);
 
@@ -294,8 +611,8 @@ export function DesktopSubtitlePanel() {
     let disposed = false;
     import("@tauri-apps/api/event")
       .then(({ listen }) => listen<ProgressPayload>("subtitle-progress", e => {
-        targetRatioRef.current = e.payload.ratio;
         const path = currentTaskRef.current;
+        targetRatioRef.current[path] = e.payload.ratio;
         setTasks(prev => prev.map(t =>
           t.path === path ? { ...t, progress: e.payload } : t
         ));
@@ -305,14 +622,30 @@ export function DesktopSubtitlePanel() {
     return () => { disposed = true; off?.(); };
   }, [isTauri]);
 
-  // 进度平滑动画（针对当前处理文件）
+  // 监听模型下载进度
+  useEffect(() => {
+    if (!isTauri) return;
+    let off: (() => void) | undefined;
+    let disposed = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => listen<{ model: string; ratio: number }>("model-download-progress", e => {
+        setDownloadProgress(prev => ({ ...prev, [e.payload.model]: e.payload.ratio }));
+      }))
+      .then(u => { if (disposed) u(); else off = u; })
+      .catch(() => { });
+    return () => { disposed = true; off?.(); };
+  }, [isTauri]);
+
+  // 进度平滑动画：对每个文件的 displayRatio 做插值
   useEffect(() => {
     if (!isRunning) { cancelAnimationFrame(rafRef.current); return; }
     const animate = () => {
-      setDisplayRatio(prev => {
-        const diff = targetRatioRef.current - prev;
-        return Math.abs(diff) < 0.002 ? targetRatioRef.current : prev + diff * 0.08;
-      });
+      setTasks(prev => prev.map(t => {
+        const target = targetRatioRef.current[t.path] ?? t.displayRatio;
+        const diff = target - t.displayRatio;
+        if (Math.abs(diff) < 0.002) return t.displayRatio === target ? t : { ...t, displayRatio: target };
+        return { ...t, displayRatio: t.displayRatio + diff * 0.08 };
+      }));
       rafRef.current = requestAnimationFrame(animate);
     };
     rafRef.current = requestAnimationFrame(animate);
@@ -328,8 +661,10 @@ export function DesktopSubtitlePanel() {
     const sel = await open({ multiple: true, filters: [{ name: "媒体文件", extensions: ["mp4", "mkv", "ts", "m2ts", "webm", "avi", "mov", "wmv", "flv", "mp3", "wav", "m4a", "aac"] }] });
     if (!sel) return;
     const paths = Array.isArray(sel) ? sel : [sel];
-    setTasks(paths.map(p => ({
-      path: p, status: "pending",
+    const { invoke } = await import("@tauri-apps/api/core");
+    const sizes = await invoke<number[]>("get_file_sizes", { paths }).catch(() => paths.map(() => 0));
+    setTasks(paths.map((p, i) => ({
+      path: p, size: sizes[i] ?? 0, status: "pending",
       progress: { stage: "", ratio: 0, message: "" },
       displayRatio: 0, result: null, error: "",
     })));
@@ -359,8 +694,8 @@ export function DesktopSubtitlePanel() {
     for (const task of tasks) {
       if (task.status === "done") continue;
       currentTaskRef.current = task.path;
-      targetRatioRef.current = 0;
-      setDisplayRatio(0);
+      targetRatioRef.current[task.path] = 0;
+      setTasks(prev => prev.map(t => t.path === task.path ? { ...t, displayRatio: 0 } : t));
       const taskStart = Date.now();
       setTasks(prev => prev.map(t =>
         t.path === task.path ? { ...t, status: "processing", progress: { stage: "starting", ratio: 0, message: "启动中..." } } : t
@@ -383,11 +718,12 @@ export function DesktopSubtitlePanel() {
           },
         });
         const totalElapsed = (Date.now() - taskStart) / 1000;
-        targetRatioRef.current = 1;
+        targetRatioRef.current[task.path] = 1;
         await new Promise(r => setTimeout(r, 400));
         setTasks(prev => prev.map(t =>
           t.path === task.path ? { ...t, status: "done", result: toCamelResult(raw), totalElapsed } : t
         ));
+        setExpandedTasks(prev => new Set([...prev, task.path]));
       } catch (e) {
         setTasks(prev => prev.map(t =>
           t.path === task.path ? { ...t, status: "error", error: String(e) } : t
@@ -458,101 +794,202 @@ export function DesktopSubtitlePanel() {
         </button>
       </div>
 
-      {/* ── 文件任务列表 ── */}
-      {tasks.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {tasks.map(task => (
-            <div key={task.path} className="rounded-xl p-4 flex flex-col gap-2"
-              style={{ background: "var(--color-surface-1)", border: `1px solid ${
-                task.status === "done" ? "oklch(72% 0.16 145 / 30%)" :
-                task.status === "error" ? "oklch(65% 0.20 20 / 30%)" :
-                "var(--color-border-subtle)"
-              }` }}>
+      {/* ── 批量完成 header ── */}
+      {(() => {
+        const doneTasks = tasks.filter(t => t.status === "done" && t.result);
+        const errorTasks = tasks.filter(t => t.status === "error");
+        if (doneTasks.length === 0 && errorTasks.length === 0) return null;
+        const totalSegments = doneTasks.reduce((sum, t) => sum + (t.result?.segments.length ?? 0), 0);
+        return (
+          <div className="flex items-center justify-between px-4 py-3 rounded-xl"
+            style={{ background: "var(--color-accent-muted)", border: "1px solid oklch(65% 0.22 265 / 20%)" }}>
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--color-accent)" }} />
+              <span className="text-sm" style={{ color: "var(--color-accent)" }}>批量完成</span>
+            </div>
+            <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+              {doneTasks.length} 个文件 · {totalSegments} 条字幕
+              {errorTasks.length > 0 && ` · ${errorTasks.length} 个失败`}
+            </span>
+          </div>
+        );
+      })()}
 
-              {/* 文件名 + 删除 */}
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm truncate font-medium" style={{ color: "var(--color-text-primary)" }}>
-                  {basename(task.path)}
-                </span>
-                {task.status === "pending" && !isRunning && (
-                  <button onClick={() => removeTask(task.path)}
-                    className="shrink-0 text-xs px-2 py-0.5 rounded"
-                    style={{ color: "var(--color-text-tertiary)", background: "var(--color-surface-2)" }}>
-                    移除
-                  </button>
-                )}
-                {task.status === "processing" && (
-                  <span className="text-xs shrink-0" style={{ color: "var(--color-accent)" }}>
-                    {task.progress.message || "处理中..."}
-                  </span>
-                )}
-                {task.status === "done" && (
-                  <span className="text-xs shrink-0" style={{ color: "var(--color-success)" }}>
-                    ✓ 完成{task.totalElapsed != null ? `  ${task.totalElapsed.toFixed(0)}s` : ""}
-                  </span>
-                )}
+      {/* ── 文件任务列表 ── */}
+      <div className="rounded-xl overflow-hidden"
+        style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border-subtle)" }}>
+        {/* 文件数量 header */}
+        {tasks.length > 0 && (
+          <div className="px-4 py-3 text-xs" style={{ color: "var(--color-text-tertiary)", borderBottom: "1px solid var(--color-border-subtle)" }}>
+            {tasks.length} 个文件
+          </div>
+        )}
+
+        {/* 空状态 */}
+        {tasks.length === 0 && (
+          <div className="px-4 py-8 text-sm text-center" style={{ color: "var(--color-text-tertiary)" }}>
+            暂无待处理文件
+          </div>
+        )}
+
+        {/* 文件列表 */}
+        <div className="divide-y" style={{ borderColor: "var(--color-border-subtle)" }}>
+          {tasks.map(task => {
+            const isExpanded = expandedTasks.has(task.path);
+            const toggleExpand = () => setExpandedTasks(prev => {
+              const next = new Set(prev);
+              next.has(task.path) ? next.delete(task.path) : next.add(task.path);
+              return next;
+            });
+
+            return (
+              <div key={task.path} style={{ borderColor: "var(--color-border-subtle)" }}>
+                {/* 文件行 header */}
+                <div className="px-4 py-3 flex items-center gap-3"
+                  style={{ background: task.status === "processing" ? "var(--color-surface-2)" : "transparent" }}>
+                  {/* 状态图标 */}
+                  <div className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
+                    style={{ background: "var(--color-surface-2)", color: "var(--color-text-secondary)" }}>
+                    {task.status === "processing" ? (
+                      <span className="w-3 h-3 rounded-full border-2 border-t-transparent animate-spin"
+                        style={{ borderColor: "var(--color-accent) transparent var(--color-accent) var(--color-accent)" }} />
+                    ) : task.status === "done" ? (
+                      <span style={{ color: "oklch(65% 0.15 145)" }}>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                          <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                          <path d="M5 8l2.5 2.5L11 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    ) : task.status === "error" ? (
+                      <span style={{ color: "var(--color-danger)" }}>✗</span>
+                    ) : (
+                      <VideoIcon />
+                    )}
+                  </div>
+
+                  {/* 文件名 + 大小 */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: "var(--color-text-primary)" }}>
+                      {basename(task.path)}
+                    </p>
+                    {task.size != null && task.size > 0 && (
+                      <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+                        {formatBytes(task.size)}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 右侧操作 */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {task.status === "pending" && !isRunning && (
+                      <button onClick={() => removeTask(task.path)}
+                        className="text-xs px-2 py-0.5 rounded"
+                        style={{ color: "var(--color-text-tertiary)", background: "var(--color-surface-2)" }}>
+                        移除
+                      </button>
+                    )}
+                    {task.status === "done" && (
+                      <button onClick={toggleExpand} style={{ color: "var(--color-text-tertiary)" }}>
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+                          style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.2s" }}>
+                          <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 进度详情（处理中） */}
+                {task.status === "processing" && (() => {
+                  const activeStepIdx = stageToStepIdx(task.progress.stage);
+                  const pct = Math.round(task.displayRatio * 100);
+                  return (
+                    <div className="px-4 pb-3 space-y-2.5">
+                      <div className="flex items-center gap-0">
+                        {PIPELINE_STEPS.map((s, i) => {
+                          const isDone = i < activeStepIdx;
+                          const isActive = i === activeStepIdx;
+                          return (
+                            <div key={s.key} className="flex items-center flex-1 last:flex-none">
+                              <div className="flex items-center gap-1 shrink-0">
+                                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300"
+                                  style={{
+                                    background: isDone || isActive ? "var(--color-accent)" : "var(--color-surface-3)",
+                                    color: isDone || isActive ? "white" : "var(--color-text-tertiary)",
+                                    boxShadow: isActive ? "0 0 10px var(--color-accent-glow, var(--color-accent))" : "none",
+                                  }}>
+                                  {isDone ? "✓" : s.icon}
+                                </div>
+                                <span className="text-[11px]" style={{ color: isDone || isActive ? "var(--color-text-primary)" : "var(--color-text-tertiary)" }}>
+                                  {s.label}
+                                </span>
+                              </div>
+                              {i < PIPELINE_STEPS.length - 1 && (
+                                <div className="flex-1 h-px mx-1 rounded-full transition-all duration-500"
+                                  style={{ background: isDone ? "var(--color-accent)" : "var(--color-border-subtle)" }} />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center text-xs">
+                          <span style={{ color: "var(--color-text-secondary)" }}>
+                            {task.progress.message || task.progress.stage || "处理中..."}
+                          </span>
+                          <span className="flex items-center gap-2 tabular-nums" style={{ color: "var(--color-text-tertiary)" }}>
+                            {task.progress.elapsed_secs != null && `${task.progress.elapsed_secs.toFixed(0)}s`}
+                            <span style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>{pct}%</span>
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "var(--color-surface-3)" }}>
+                          <div className="h-full rounded-full transition-all duration-300"
+                            style={{ width: `${pct}%`, background: "var(--color-accent)", boxShadow: "0 0 8px var(--color-accent-glow, var(--color-accent))" }} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 错误 */}
                 {task.status === "error" && (
-                  <span className="text-xs shrink-0" style={{ color: "var(--color-danger)" }}>✗ 失败</span>
+                  <div className="px-4 pb-3 text-xs" style={{ color: "var(--color-danger)" }}>{task.error}</div>
+                )}
+
+                {/* 完成结果（展开时） */}
+                {task.status === "done" && task.result && isExpanded && (
+                  <div className="px-4 pb-3 space-y-2">
+                    {/* 下载区：横排 */}
+                    <div className="flex gap-1.5 p-2 rounded-lg" style={{ background: "var(--color-surface-2)" }}>
+                      {[
+                        { title: "原文", subtitle: sourceLang.toUpperCase(), onClick: async () => {
+                          if (!isTauri || !task.result) return;
+                          const { invoke } = await import("@tauri-apps/api/core");
+                          await invoke("save_srt", { path: task.result.originalPath, content: task.result.originalSrt });
+                          invoke("reveal_in_finder", { path: task.result.originalPath });
+                        }},
+                        { title: "译文", subtitle: targetLang, onClick: async () => {
+                          if (!isTauri || !task.result) return;
+                          const { invoke } = await import("@tauri-apps/api/core");
+                          await invoke("save_srt", { path: task.result.translatedPath, content: task.result.translatedSrt });
+                          invoke("reveal_in_finder", { path: task.result.translatedPath });
+                        }},
+                        ...(task.result.bilingualSrt ? [{ title: "双语", subtitle: "双轨", onClick: async () => {
+                          if (!isTauri || !task.result?.bilingualSrt) return;
+                          const { invoke } = await import("@tauri-apps/api/core");
+                          await invoke("save_srt", { path: task.result.bilingualPath, content: task.result.bilingualSrt });
+                          invoke("reveal_in_finder", { path: task.result.bilingualPath });
+                        }}] : []),
+                      ].map(item => <DownloadChip key={item.title} {...item} />)}
+                    </div>
+                    <SubtitlePreview result={task.result} sourceLang={sourceLang} targetLang={targetLang} />
+                  </div>
                 )}
               </div>
-
-              {/* 进度条 */}
-              {task.status === "processing" && (
-                <div>
-                  <div className="flex justify-between text-xs mb-1" style={{ color: "var(--color-text-tertiary)" }}>
-                    <span>{task.progress.message || task.progress.stage}</span>
-                    <span className="flex items-center gap-2">
-                      {task.progress.elapsed_secs != null && (
-                        <span style={{ color: "var(--color-text-tertiary)" }}>
-                          {task.progress.elapsed_secs.toFixed(0)}s
-                        </span>
-                      )}
-                      {Math.round(displayRatio * 100)}%
-                    </span>
-                  </div>
-                  <div className="h-1 rounded-full overflow-hidden" style={{ background: "var(--color-surface-3)" }}>
-                    <div className="h-full rounded-full"
-                      style={{ width: `${Math.round(displayRatio * 100)}%`, background: "var(--color-accent)" }} />
-                  </div>
-                </div>
-              )}
-
-              {/* 错误 */}
-              {task.status === "error" && (
-                <div className="text-xs" style={{ color: "var(--color-danger)" }}>{task.error}</div>
-              )}
-
-              {/* 结果：让用户选择保存哪种字幕 */}
-              {task.status === "done" && task.result && (
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                    共 {task.result.segments.length} 条字幕，选择要保存的格式：
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { label: "原文字幕", content: task.result.originalSrt, path: task.result.originalPath },
-                      { label: "译文字幕", content: task.result.translatedSrt, path: task.result.translatedPath },
-                      ...(task.result.bilingualSrt ? [{ label: "双语字幕", content: task.result.bilingualSrt, path: task.result.bilingualPath ?? "" }] : []),
-                    ].map(({ label, content, path }) => (
-                      <button key={label}
-                        onClick={async () => {
-                          if (!isTauri) return;
-                          const { invoke } = await import("@tauri-apps/api/core");
-                          await invoke("save_srt", { path, content });
-                          invoke("reveal_in_finder", { path });
-                        }}
-                        className="rounded-lg px-3 py-1.5 text-xs font-medium"
-                        style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)" }}>
-                        ↓ {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
-      )}
+      </div>
 
       {/* ── 设置面板 ── */}
       <div className="rounded-2xl overflow-hidden"
@@ -583,38 +1020,15 @@ export function DesktopSubtitlePanel() {
 
             {settings.asrProvider === "local-whisper" && (
               <Row label="模型">
-                <div className="flex flex-col gap-1.5">
-                  {WHISPER_MODELS.map(m => {
-                    const downloaded = downloadedModels.has(m.name);
-                    const isSelected = settings.whisperModel === m.name;
-                    const isDownloading = downloadingModel === m.name;
-                    return (
-                      <div key={m.name} className="flex items-center justify-between gap-2">
-                        <button
-                          onClick={() => set("whisperModel", m.name)}
-                          className="flex items-center gap-2 flex-1 text-left rounded-lg px-3 py-1.5 text-xs transition-all"
-                          style={{
-                            background: isSelected ? "var(--color-accent-muted)" : "var(--color-surface-2)",
-                            border: `1px solid ${isSelected ? "var(--color-accent)" : "var(--color-border)"}`,
-                            color: isSelected ? "var(--color-accent)" : "var(--color-text-primary)",
-                          }}>
-                          <span className="font-medium">{m.label}</span>
-                          <span style={{ color: "var(--color-text-tertiary)" }}>{m.size}</span>
-                          {downloaded && <span style={{ color: "var(--color-success)" }}>✓</span>}
-                        </button>
-                        {!downloaded && (
-                          <button
-                            onClick={() => downloadModel(m.name)}
-                            disabled={isDownloading}
-                            className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium disabled:opacity-50"
-                            style={{ background: "var(--color-accent)", color: "white" }}>
-                            {isDownloading ? "下载中..." : "下载"}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                <ModelSelect
+                  value={settings.whisperModel}
+                  onChange={v => set("whisperModel", v)}
+                  downloadedModels={downloadedModels}
+                  downloadingModel={downloadingModel}
+                  downloadProgress={downloadProgress}
+                  onDownload={downloadModel}
+                  onDelete={deleteModel}
+                />
               </Row>
             )}
             {settings.asrProvider === "groq" && (

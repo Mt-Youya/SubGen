@@ -751,7 +751,7 @@ def main():
     parser.add_argument(
         "--model",
         default="medium",
-        choices=["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"],
+        choices=["base", "small", "medium", "large", "large-v2", "large-v3"],
         help="Whisper 模型（默认：medium）",
     )
     parser.add_argument("--source", default="ja", help="源语言代码（默认：ja 日文）")

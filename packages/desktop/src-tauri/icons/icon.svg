@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#0f0c2e"/>
+    </linearGradient>
+    <linearGradient id="bar_full" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="bar_mid" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="1024" height="1024" rx="220" ry="220" fill="url(#bg)"/>
+
+  <!-- 声波：9根柱，对称山形，宽52，间距64，中心x=512 -->
+  <!-- x起点 = 512 - 4*64 - 26 = 230 -->
+  <!-- 高度序列（山形）: 160 240 340 440 520 440 340 240 160 -->
+  <!-- 每根柱竖直居中在 y=200~700(高500)，center_y=450 -->
+
+  <!-- 声波柱组，整体上移，底部在 y=680，留足字幕空间 -->
+  <!-- 柱1: h=160, y=520 -->
+  <rect x="230" y="520" width="52" height="160" rx="26" fill="url(#bar_full)" opacity="0.45"/>
+  <!-- 柱2: h=240, y=440 -->
+  <rect x="294" y="440" width="52" height="240" rx="26" fill="url(#bar_full)" opacity="0.60"/>
+  <!-- 柱3: h=340, y=340 -->
+  <rect x="358" y="340" width="52" height="340" rx="26" fill="url(#bar_full)" opacity="0.75"/>
+  <!-- 柱4: h=430, y=250 -->
+  <rect x="422" y="250" width="52" height="430" rx="26" fill="url(#bar_full)" opacity="0.90"/>
+  <!-- 柱5: h=490, y=190（最高，中心） -->
+  <rect x="486" y="190" width="52" height="490" rx="26" fill="url(#bar_full)"/>
+  <!-- 柱6: h=430, y=250 -->
+  <rect x="550" y="250" width="52" height="430" rx="26" fill="url(#bar_full)" opacity="0.90"/>
+  <!-- 柱7: h=340, y=340 -->
+  <rect x="614" y="340" width="52" height="340" rx="26" fill="url(#bar_full)" opacity="0.75"/>
+  <!-- 柱8: h=240, y=440 -->
+  <rect x="678" y="440" width="52" height="240" rx="26" fill="url(#bar_full)" opacity="0.60"/>
+  <!-- 柱9: h=160, y=520 -->
+  <rect x="742" y="520" width="52" height="160" rx="26" fill="url(#bar_full)" opacity="0.45"/>
+
+  <!-- 字幕条1（长，粗）：y=724 -->
+  <rect x="148" y="724" width="544" height="52" rx="26" fill="url(#bar_full)" opacity="0.95"/>
+  <!-- 字幕条2（短，细）：y=800 -->
+  <rect x="148" y="800" width="340" height="38" rx="19" fill="white" opacity="0.20"/>
+</svg>

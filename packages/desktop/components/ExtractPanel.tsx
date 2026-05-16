@@ -46,8 +46,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 const basename = (p: string) => p.split(/[\\/]/).pop() ?? p;
 
+function formatBytes(b: number) {
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + " GB";
+  if (b >= 1048576)    return (b / 1048576).toFixed(1) + " MB";
+  if (b >= 1024)       return (b / 1024).toFixed(0) + " KB";
+  return b + " B";
+}
+
 export function ExtractPanel() {
   const [inputs, setInputs] = useState<string[]>([]);
+  const [inputSizes, setInputSizes] = useState<number[]>([]);
   const [outputDir, setOutputDir] = useState("");
   const [duration, setDuration] = useState(0);
   const [status, setStatus] = useState<Status>("idle");
@@ -130,7 +138,11 @@ export function ExtractPanel() {
       filters: [{ name: "视频文件", extensions: ["mp4", "mkv", "ts", "m2ts", "webm", "avi", "mov", "wmv", "flv"] }],
     });
     if (selected) {
-      setInputs(Array.isArray(selected) ? selected : [selected]);
+      const paths = Array.isArray(selected) ? selected : [selected];
+      setInputs(paths);
+      const { invoke } = await import("@tauri-apps/api/core");
+      const sizes = await invoke<number[]>("get_file_sizes", { paths }).catch(() => paths.map(() => 0));
+      setInputSizes(sizes);
     }
   }, [isTauri]);
 
@@ -199,14 +211,17 @@ export function ExtractPanel() {
           </div>
         </Row>
 
-        {inputs.length > 1 && (
+        {inputs.length > 0 && (
           <Row label="">
             <div className="flex flex-col gap-1 max-h-28 overflow-y-auto">
               {inputs.map((f, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs truncate"
+                <div key={i} className="flex items-center gap-2 text-xs"
                   style={{ color: "var(--color-text-tertiary)" }}>
-                  <span className="shrink-0">{i + 1}.</span>
-                  <span className="truncate">{basename(f)}</span>
+                  {inputs.length > 1 && <span className="shrink-0">{i + 1}.</span>}
+                  <span className="truncate flex-1">{basename(f)}</span>
+                  {inputSizes[i] != null && inputSizes[i] > 0 && (
+                    <span className="shrink-0 tabular-nums">{formatBytes(inputSizes[i])}</span>
+                  )}
                 </div>
               ))}
             </div>
