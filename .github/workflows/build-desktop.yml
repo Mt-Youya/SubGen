@@ -30,6 +30,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Extract version from tag
+        shell: bash
+        run: |
+          # tag 格式: desktop-v1.2.3 → 提取 1.2.3，手动触发时用 Cargo.toml 现有版本
+          if [[ "$GITHUB_REF_NAME" == desktop-v* ]]; then
+            VERSION="${GITHUB_REF_NAME#desktop-v}"
+          else
+            VERSION=$(grep '^version' packages/desktop/src-tauri/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          # 更新 tauri.conf.json
+          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" packages/desktop/src-tauri/tauri.conf.json
+          # 更新 Cargo.toml（第一个 version 行）
+          sed -i.bak "0,/^version = .*/s/^version = .*/version = \"$VERSION\"/" packages/desktop/src-tauri/Cargo.toml
+          rm -f packages/desktop/src-tauri/tauri.conf.json.bak packages/desktop/src-tauri/Cargo.toml.bak
+          echo "Build version: $VERSION"
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24

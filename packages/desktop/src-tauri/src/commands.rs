@@ -2,6 +2,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
+/// 创建不弹窗的 Command（Windows 上加 CREATE_NO_WINDOW）
+fn silent_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use reqwest::multipart::{Form, Part};
@@ -161,6 +172,10 @@ fn clean_key(value: &Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+fn num_cpus() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+}
+
 fn dirs_cache() -> PathBuf {
     let base = env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(base).join(".subgen_cache")
@@ -293,7 +308,7 @@ async fn transcribe_with_whisper_legacy(
         let srt_prefix = wav.with_extension("");
         let srt_path = wav.with_extension("srt");
 
-        let output = Command::new(&whisper)
+        let output = silent_command(&whisper)
             .args([
                 "-m", &model.to_string_lossy(),
                 "-f", &wav.to_string_lossy(),
@@ -416,7 +431,7 @@ pub async fn download_whisper_model(model: Option<String>) -> Result<String, Str
         "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin"
     );
 
-    let status = Command::new("curl")
+    let status = silent_command("curl")
         .args(["-L", "--progress-bar", "-o"])
         .arg(&model_path)
         .arg(&url)
@@ -494,7 +509,7 @@ fn split_audio_for_asr(
     fs::create_dir_all(chunk_dir).map_err(|e| format!("创建临时目录失败: {e}"))?;
     let output_pattern = chunk_dir.join("chunk_%05d.wav");
 
-    let status = Command::new(ffmpeg)
+    let status = silent_command(ffmpeg)
         .args(["-y", "-hide_banner", "-loglevel", "error"])
         .arg("-i")
         .arg(input)
@@ -994,21 +1009,21 @@ async fn translate_segments(
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
+        silent_command("open")
             .args(["-R", &path])
             .spawn()
             .map_err(|e| format!("打开 Finder 失败: {e}"))?;
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
+        silent_command("explorer")
             .args(["/select,", &path])
             .spawn()
             .map_err(|e| format!("打开资源管理器失败: {e}"))?;
     }
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open")
+        silent_command("xdg-open")
             .arg(std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new("/")))
             .spawn()
             .map_err(|e| format!("打开文件管理器失败: {e}"))?;
@@ -1057,7 +1072,7 @@ pub async fn download_ffmpeg(app: AppHandle) -> Result<String, String> {
 
     // 用系统 curl 下载（避免引入大型 HTTP 依赖）
     let archive = resource_dir.join("ffmpeg_download_tmp");
-    let status = Command::new("curl")
+    let status = silent_command("curl")
         .args(["-L", "-o"])
         .arg(&archive)
         .arg(url)
@@ -1071,7 +1086,7 @@ pub async fn download_ffmpeg(app: AppHandle) -> Result<String, String> {
     // 解压
     if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
         // zip
-        let status = Command::new("unzip")
+        let status = silent_command("unzip")
             .args(["-o"])
             .arg(&archive)
             .args(["-d"])
@@ -1106,7 +1121,7 @@ pub async fn download_ffmpeg(app: AppHandle) -> Result<String, String> {
         }
     } else {
         // tar.xz (Linux)
-        let status = Command::new("tar")
+        let status = silent_command("tar")
             .args(["-xf"])
             .arg(&archive)
             .args(["-C"])
@@ -1176,19 +1191,19 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
             let ffmpeg_clone = ffmpeg.clone();
             let app_clone = app.clone();
 
-            // ffmpeg -progress 输出到 pipe，实时读取进度
+            // ffmpeg -progress 输出到 stdout pipe，实时读取进度
             let result = tokio::task::spawn_blocking(move || {
                 use std::io::{BufRead, BufReader};
                 use std::process::Stdio;
 
-                let mut cmd = Command::new(&ffmpeg_clone);
+                let mut cmd = silent_command(&ffmpeg_clone);
                 cmd.args(["-y", "-hide_banner", "-loglevel", "quiet"])
                     .arg("-i").arg(&input)
                     .arg("-vn")
                     .arg("-acodec").arg("pcm_s16le")
                     .arg("-ar").arg("16000")
                     .arg("-ac").arg("1")
-                    .arg("-progress").arg("pipe:2")  // 进度写到 stderr
+                    .arg("-progress").arg("pipe:1")  // 进度写到 stdout
                     .arg("-nostats");
 
                 if duration > 0.0 {
@@ -1196,19 +1211,19 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
                 }
 
                 cmd.arg(&output_clone)
-                   .stdout(Stdio::null())
-                   .stderr(Stdio::piped());
+                   .stdout(Stdio::piped())
+                   .stderr(Stdio::null());
+
 
                 let mut child = cmd.spawn()
                     .map_err(|e| format!("ffmpeg 启动失败: {e}"))?;
 
-                let stderr = child.stderr.take().unwrap();
-                let reader = BufReader::new(stderr);
+                let stdout = child.stdout.take().unwrap();
+                let reader = BufReader::new(stdout);
 
                 let max_secs = if duration > 0.0 { duration } else { total_secs };
 
                 for line in reader.lines().map_while(Result::ok) {
-                    // ffmpeg -progress 输出格式：out_time_us=1234567
                     if let Some(val) = line.strip_prefix("out_time_us=") {
                         if let Ok(us) = val.trim().parse::<f64>() {
                             let secs = us / 1_000_000.0;
@@ -1274,7 +1289,7 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
 /// 用 ffprobe/ffmpeg 获取媒体时长（秒）
 fn get_duration(ffmpeg: &Path, input: &Path) -> Option<f64> {
     // 用 ffmpeg -i 读取时长
-    let output = Command::new(ffmpeg)
+    let output = silent_command(ffmpeg)
         .args(["-i"])
         .arg(input)
         .args(["-f", "null", "-"])
@@ -1365,14 +1380,20 @@ pub async fn generate_subtitles(
             if use_server {
                 // ── whisper-server HTTP 模式 ──
                 let port: u16 = 18200;
-                let mut server = Command::new(&server_bin)
-                    .args(["-m", &model.to_string_lossy(), "--port", &port.to_string()])
+                emit_progress(&app, "loading_model", 0.08,
+                    format!("正在加载 Whisper 模型（{}）...", model_name));
+                let mut server = silent_command(&server_bin)
+                    .args([
+                        "-m", &model.to_string_lossy(),
+                        "--port", &port.to_string(),
+                        "-t", &num_cpus().to_string(), // 使用所有 CPU 核心
+                    ])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::piped())  // 收集 stderr 便于诊断
                     .spawn()
                     .map_err(|e| format!("启动 whisper-server 失败: {e}"))?;
 
-                // 等待 server 就绪（最多 120 秒，large 模型加载需要更长时间）
+                // 等待 server 就绪，每5秒更新一次进度提示
                 let start = std::time::Instant::now();
                 let client = reqwest::Client::new();
                 loop {
@@ -1388,7 +1409,14 @@ pub async fn generate_subtitles(
                         return Err(format!("whisper-server 启动超时（>120s）\nstderr: {}", &stderr_output[..stderr_output.len().min(500)]));
                     }
                     if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
+                        emit_progress(&app, "loading_model", 0.1, "模型加载完成，开始转录...");
                         break;
+                    }
+                    let elapsed = start.elapsed().as_secs();
+                    // 每5秒更新一次等待提示
+                    if elapsed % 5 == 0 && elapsed > 0 {
+                        emit_progress(&app, "loading_model", 0.08,
+                            format!("正在加载模型... ({elapsed}s)"));
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
