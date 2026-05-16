@@ -2,7 +2,8 @@
   "bundle": {
     "resources": {
       "resources/whisper-server": "whisper-server",
-      "resources/whisper-cli": "whisper-cli"
+      "resources/whisper-cli": "whisper-cli",
+      "resources/ffmpeg": "ffmpeg"
     }
   }
 }
