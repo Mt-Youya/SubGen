@@ -81,6 +81,9 @@ jobs:
               "@loader_path/libggml-base.0.dylib" packages/desktop/src-tauri/resources/$bin
             codesign --force --sign - packages/desktop/src-tauri/resources/$bin
           done
+          # 修复 libggml.0.dylib 内部的 @rpath 依赖
+          install_name_tool -change "@rpath/libggml-base.0.dylib" "@loader_path/libggml-base.0.dylib" \
+            packages/desktop/src-tauri/resources/libggml.0.dylib
           codesign --force --sign - packages/desktop/src-tauri/resources/libwhisper.1.dylib
           codesign --force --sign - packages/desktop/src-tauri/resources/libggml.0.dylib
           codesign --force --sign - packages/desktop/src-tauri/resources/libggml-base.0.dylib

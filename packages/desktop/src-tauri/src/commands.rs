@@ -1368,17 +1368,24 @@ pub async fn generate_subtitles(
                 let mut server = Command::new(&server_bin)
                     .args(["-m", &model.to_string_lossy(), "--port", &port.to_string()])
                     .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped())  // 收集 stderr 便于诊断
                     .spawn()
                     .map_err(|e| format!("启动 whisper-server 失败: {e}"))?;
 
-                // 等待 server 就绪（最多 30 秒）
+                // 等待 server 就绪（最多 120 秒，large 模型加载需要更长时间）
                 let start = std::time::Instant::now();
                 let client = reqwest::Client::new();
                 loop {
-                    if start.elapsed().as_secs() > 30 {
+                    if start.elapsed().as_secs() > 120 {
+                        // 读取 stderr 帮助诊断
+                        let stderr_output = server.stderr.take().and_then(|mut s| {
+                            use std::io::Read;
+                            let mut buf = String::new();
+                            s.read_to_string(&mut buf).ok();
+                            Some(buf)
+                        }).unwrap_or_default();
                         server.kill().ok();
-                        return Err("whisper-server 启动超时".to_string());
+                        return Err(format!("whisper-server 启动超时（>120s）\nstderr: {}", &stderr_output[..stderr_output.len().min(500)]));
                     }
                     if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
                         break;
