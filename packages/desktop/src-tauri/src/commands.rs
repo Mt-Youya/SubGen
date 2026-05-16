@@ -56,6 +56,7 @@ pub struct GenerateOptions {
     pub tencent_secret_key: Option<String>,
     pub chunk_seconds: Option<u32>,
     pub skip_cache: Option<bool>,
+    pub whisper_model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -202,9 +203,13 @@ fn resolve_binary(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     Err(format!("未找到 {name}，请重新安装 SubGen"))
 }
 
-/// 默认模型路径 ~/.subgen_cache/models/ggml-small.bin
+fn model_path(name: &str) -> PathBuf {
+    dirs_cache().join("models").join(format!("ggml-{name}.bin"))
+}
+
+/// 默认模型路径（兜底用 small）
 fn default_model_path() -> PathBuf {
-    dirs_cache().join("models").join("ggml-small.bin")
+    model_path("small")
 }
 
 /// 用 whisper-server HTTP API 转录单个 WAV，返回 segments
@@ -379,34 +384,42 @@ pub fn check_dependencies(app: AppHandle) -> serde_json::Value {
 
 /// 检查 whisper 模型是否存在
 #[tauri::command]
-pub fn check_whisper_model(app: AppHandle) -> serde_json::Value {
+pub fn check_whisper_model(app: AppHandle, model: Option<String>) -> serde_json::Value {
     let whisper_ok = resolve_whisper(&app).is_ok();
-    let model_path = default_model_path();
-    let model_ok = model_path.exists();
+    let name = model.as_deref().unwrap_or("small");
+    let mp = model_path(name);
+    // 返回所有模型的下载状态
+    let models = ["tiny","base","small","medium","large-v3"].iter().map(|m| {
+        let p = model_path(m);
+        serde_json::json!({"name": m, "downloaded": p.exists(), "path": p.to_string_lossy()})
+    }).collect::<Vec<_>>();
     serde_json::json!({
         "whisper": whisper_ok,
-        "model": model_ok,
-        "model_path": model_path.to_string_lossy()
+        "model": mp.exists(),
+        "model_path": mp.to_string_lossy(),
+        "models": models,
     })
 }
 
-/// 下载 ggml-small 模型到 ~/.subgen_cache/models/
+/// 下载指定模型到 ~/.subgen_cache/models/
 #[tauri::command]
-pub async fn download_whisper_model() -> Result<String, String> {
-    let model_path = default_model_path();
+pub async fn download_whisper_model(model: Option<String>) -> Result<String, String> {
+    let name = model.as_deref().unwrap_or("small");
+    let model_path = model_path(name);
     if model_path.exists() {
         return Ok(model_path.to_string_lossy().to_string());
     }
     fs::create_dir_all(model_path.parent().unwrap())
         .map_err(|e| format!("创建模型目录失败: {e}"))?;
 
-    // 优先用国内镜像，HuggingFace 在国内访问受限
-    let url = "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin";
+    let url = format!(
+        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin"
+    );
 
     let status = Command::new("curl")
         .args(["-L", "--progress-bar", "-o"])
         .arg(&model_path)
-        .arg(url)
+        .arg(&url)
         .status()
         .map_err(|e| format!("curl 不可用: {e}"))?;
 
@@ -1337,9 +1350,10 @@ pub async fn generate_subtitles(
             // ── 本地 whisper-server 模式（模型常驻，HTTP 并发请求）──
             let server_bin = resolve_whisper_server(&app)
                 .or_else(|_| resolve_whisper(&app))?; // 兜底：没有 server 就用 cli
-            let model = default_model_path();
+            let model_name = opts.whisper_model.as_deref().unwrap_or("small");
+            let model = model_path(model_name);
             if !model.exists() {
-                return Err("请先下载 Whisper 模型（在设置中点击下载）".to_string());
+                return Err(format!("请先下载 Whisper 模型 {model_name}（在设置中点击下载）"));
             }
 
             let use_server = server_bin
@@ -1465,7 +1479,7 @@ pub async fn generate_subtitles(
                         translate_provider: String::new(),
                         groq_api_key: groq_key, siliconflow_api_key: sf_key,
                         deepl_api_key: None, tencent_secret_id: None,
-                        tencent_secret_key: None, chunk_seconds: None, skip_cache: None,
+                        tencent_secret_key: None, chunk_seconds: None, skip_cache: None, whisper_model: None,
                     };
                     transcribe_chunk(&client, &provider, &chunk, &lang, &opts_clone)
                         .await

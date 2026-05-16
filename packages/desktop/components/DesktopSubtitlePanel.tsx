@@ -18,6 +18,8 @@ interface GenerateResult {
   translatedPath: string;
   bilingualPath: string | null;
 }
+type WhisperModel = "tiny" | "base" | "small" | "medium" | "large-v3";
+
 interface Settings {
   asrProvider: AsrProvider;
   translateProvider: TranslateProvider;
@@ -28,6 +30,7 @@ interface Settings {
   tencentSecretKey: string;
   chunkSeconds: number;
   skipCache: boolean;
+  whisperModel: WhisperModel;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -40,7 +43,16 @@ const DEFAULT_SETTINGS: Settings = {
   tencentSecretKey: "",
   chunkSeconds: 240,
   skipCache: false,
+  whisperModel: "small",
 };
+
+const WHISPER_MODELS: { name: WhisperModel; label: string; size: string }[] = [
+  { name: "tiny",     label: "Tiny",     size: "75MB"  },
+  { name: "base",     label: "Base",     size: "142MB" },
+  { name: "small",    label: "Small",    size: "466MB" },
+  { name: "medium",   label: "Medium",   size: "1.5GB" },
+  { name: "large-v3", label: "Large v3", size: "3.1GB" },
+];
 
 const SOURCE_LANGS = [
   { code: "ja", label: "日语" }, { code: "zh", label: "中文" },
@@ -58,9 +70,9 @@ function hasTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-function settingsComplete(s: Settings, modelReady: boolean): boolean {
+function settingsComplete(s: Settings, modelReady: boolean, downloadedModels?: Set<WhisperModel>): boolean {
   const asrOk = s.asrProvider === "local-whisper"
-    ? modelReady
+    ? (downloadedModels ? downloadedModels.has(s.whisperModel) : modelReady)
     : s.asrProvider === "groq" ? !!s.groqApiKey.trim() : !!s.siliconflowApiKey.trim();
   const trlOk = s.translateProvider === "tencent"
     ? !!(s.tencentSecretId.trim() && s.tencentSecretKey.trim())
@@ -208,32 +220,43 @@ export function DesktopSubtitlePanel() {
   const currentTaskRef = useRef<string>("");  // 当前处理文件路径
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelReady, setModelReady] = useState(false);
-  const [modelDownloading, setModelDownloading] = useState(false);
+  const [downloadingModel, setDownloadingModel] = useState<WhisperModel | null>(null);
+  const [downloadedModels, setDownloadedModels] = useState<Set<WhisperModel>>(new Set());
   const initialized = useRef(false);
+
+  const whisperModelRef = useRef(settings.whisperModel);
+  useEffect(() => { whisperModelRef.current = settings.whisperModel; }, [settings.whisperModel]);
 
   const checkModel = useCallback(async () => {
     if (!hasTauriRuntime()) return;
     const { invoke } = await import("@tauri-apps/api/core");
-    const info = await invoke<{ whisper: boolean; model: boolean }>("check_whisper_model").catch(() => ({ whisper: false, model: false }));
+    const info = await invoke<{
+      whisper: boolean;
+      model: boolean;
+      models: { name: WhisperModel; downloaded: boolean }[];
+    }>("check_whisper_model", { model: whisperModelRef.current })
+      .catch(() => ({ whisper: false, model: false, models: [] }));
     setModelReady(info.model && info.whisper);
-  }, []);
+    setDownloadedModels(new Set(info.models.filter(m => m.downloaded).map(m => m.name)));
+  }, []); // 不依赖 settings，通过 ref 读取当前值
 
-  const downloadModel = useCallback(async () => {
-    setModelDownloading(true);
+  const downloadModel = useCallback(async (modelName: WhisperModel) => {
+    setDownloadingModel(modelName);
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("download_whisper_model");
-      setModelReady(true);
+      await invoke("download_whisper_model", { model: modelName });
+      setDownloadedModels(prev => new Set([...prev, modelName]));
+      if (modelName === settings.whisperModel) setModelReady(true);
     } catch (e) {
       alert(`模型下载失败: ${e}`);
     } finally {
-      setModelDownloading(false);
+      setDownloadingModel(null);
     }
-  }, []);
+  }, [settings.whisperModel]);
 
+  // 只在挂载时跑一次
   useEffect(() => {
     setIsTauri(hasTauriRuntime());
-    checkModel();
     const saved = window.localStorage.getItem("subgen-desktop-settings");
     if (saved) {
       try {
@@ -248,7 +271,17 @@ export function DesktopSubtitlePanel() {
       setSettingsOpen(true);
     }
     initialized.current = true;
-  }, [checkModel]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // isTauri 就绪时初始检查
+  useEffect(() => {
+    if (isTauri) checkModel();
+  }, [isTauri, checkModel]);
+
+  // 切换模型时重新检查
+  useEffect(() => {
+    if (isTauri) checkModel();
+  }, [settings.whisperModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!initialized.current) return;
@@ -314,7 +347,7 @@ export function DesktopSubtitlePanel() {
   }, []);
 
   const canSubmit = useMemo(() =>
-    isTauri && tasks.length > 0 && !!outputDir && !isRunning && settingsComplete(settings, modelReady),
+    isTauri && tasks.length > 0 && !!outputDir && !isRunning && settingsComplete(settings, modelReady, downloadedModels),
     [isTauri, tasks, outputDir, isRunning, settings, modelReady]);
 
   const handleSubmit = useCallback(async () => {
@@ -346,6 +379,7 @@ export function DesktopSubtitlePanel() {
             tencent_secret_key: settings.tencentSecretKey || null,
             chunk_seconds: settings.chunkSeconds,
             skip_cache: settings.skipCache,
+            whisper_model: settings.whisperModel,
           },
         });
         const totalElapsed = (Date.now() - taskStart) / 1000;
@@ -548,24 +582,39 @@ export function DesktopSubtitlePanel() {
             </Row>
 
             {settings.asrProvider === "local-whisper" && (
-              <Row label="">
-                {modelReady ? (
-                  <span className="text-xs" style={{ color: "var(--color-success)" }}>✓ 模型已就绪</span>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs" style={{ color: "var(--color-warning)" }}>
-                      需下载模型（~466MB）
-                    </span>
-                    <button
-                      onClick={downloadModel}
-                      disabled={modelDownloading}
-                      className="rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
-                      style={{ background: "var(--color-accent)", color: "white" }}
-                    >
-                      {modelDownloading ? "下载中..." : "下载"}
-                    </button>
-                  </div>
-                )}
+              <Row label="模型">
+                <div className="flex flex-col gap-1.5">
+                  {WHISPER_MODELS.map(m => {
+                    const downloaded = downloadedModels.has(m.name);
+                    const isSelected = settings.whisperModel === m.name;
+                    const isDownloading = downloadingModel === m.name;
+                    return (
+                      <div key={m.name} className="flex items-center justify-between gap-2">
+                        <button
+                          onClick={() => set("whisperModel", m.name)}
+                          className="flex items-center gap-2 flex-1 text-left rounded-lg px-3 py-1.5 text-xs transition-all"
+                          style={{
+                            background: isSelected ? "var(--color-accent-muted)" : "var(--color-surface-2)",
+                            border: `1px solid ${isSelected ? "var(--color-accent)" : "var(--color-border)"}`,
+                            color: isSelected ? "var(--color-accent)" : "var(--color-text-primary)",
+                          }}>
+                          <span className="font-medium">{m.label}</span>
+                          <span style={{ color: "var(--color-text-tertiary)" }}>{m.size}</span>
+                          {downloaded && <span style={{ color: "var(--color-success)" }}>✓</span>}
+                        </button>
+                        {!downloaded && (
+                          <button
+                            onClick={() => downloadModel(m.name)}
+                            disabled={isDownloading}
+                            className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium disabled:opacity-50"
+                            style={{ background: "var(--color-accent)", color: "white" }}>
+                            {isDownloading ? "下载中..." : "下载"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </Row>
             )}
             {settings.asrProvider === "groq" && (
