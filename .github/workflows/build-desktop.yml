@@ -80,13 +80,15 @@ jobs:
           rm -rf ffmpeg-mac ffmpeg-mac.zip
           chmod +x packages/desktop/src-tauri/resources/ffmpeg
           codesign --force --sign - packages/desktop/src-tauri/resources/ffmpeg || true
-          # 从二进制 otool -L 读取实际 dylib 路径，精确复制，不依赖版本号通配符
-          WHISPER_LIB=$(otool -L /opt/homebrew/bin/whisper-server | grep 'libwhisper' | awk '{print $1}')
-          GGML_LIB=$(otool -L /opt/homebrew/bin/whisper-server | grep 'libggml\.0\.' | awk '{print $1}')
-          GGML_BASE_LIB=$(otool -L /opt/homebrew/bin/whisper-server | grep 'libggml-base' | awk '{print $1}')
-          cp "$WHISPER_LIB"   packages/desktop/src-tauri/resources/libwhisper.1.dylib
-          cp "$GGML_LIB"      packages/desktop/src-tauri/resources/libggml.0.dylib
-          cp "$GGML_BASE_LIB" packages/desktop/src-tauri/resources/libggml-base.0.dylib
+          # 用 find 从 brew 安装目录里找 dylib，不依赖版本号通配符
+          WHISPER_CELLAR=$(brew --cellar whisper-cpp)/$(brew list --versions whisper-cpp | awk '{print $2}')
+          GGML_OPT=$(brew --prefix ggml)/lib
+          cp "$(find "$WHISPER_CELLAR/lib" -name 'libwhisper.*.dylib' | head -1)" \
+             packages/desktop/src-tauri/resources/libwhisper.1.dylib
+          cp "$(find "$GGML_OPT" -name 'libggml.0.*.dylib' | head -1)" \
+             packages/desktop/src-tauri/resources/libggml.0.dylib
+          cp "$(find "$GGML_OPT" -name 'libggml-base.0.*.dylib' | head -1)" \
+             packages/desktop/src-tauri/resources/libggml-base.0.dylib
           # 修改 rpath 为相对路径
           for bin in whisper-cli whisper-server; do
             install_name_tool -change "@rpath/libwhisper.1.dylib" "@loader_path/libwhisper.1.dylib" \
