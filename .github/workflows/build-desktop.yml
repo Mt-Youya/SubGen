@@ -56,14 +56,13 @@ jobs:
           mkdir -p packages/desktop/src-tauri/resources
           cp /opt/homebrew/bin/whisper-cli packages/desktop/src-tauri/resources/
           cp /opt/homebrew/bin/whisper-server packages/desktop/src-tauri/resources/
-          # ffmpeg（homebrew 动态链接版，rpath 会指向 homebrew，打包后用户可能没有）
-          # 改用 BtbN 静态版
-          curl -L "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-macos64-gpl.zip" \
-               -o ffmpeg-mac.zip
+          # evermeet.cx 提供 macOS 静态编译 ffmpeg（单文件，无依赖）
+          curl -L "https://evermeet.cx/ffmpeg/get/ffmpeg/zip" -o ffmpeg-mac.zip
           unzip -o ffmpeg-mac.zip -d ffmpeg-mac
-          find ffmpeg-mac -name "ffmpeg" -not -name "*.dylib" | head -1 | xargs -I{} cp {} packages/desktop/src-tauri/resources/ffmpeg
+          cp ffmpeg-mac/ffmpeg packages/desktop/src-tauri/resources/ffmpeg
           rm -rf ffmpeg-mac ffmpeg-mac.zip
           chmod +x packages/desktop/src-tauri/resources/ffmpeg
+          codesign --force --sign - packages/desktop/src-tauri/resources/ffmpeg || true
           # 用 find 精确找到 realpath，避免通配符匹配多个文件
           WHISPER_VER=$(ls /opt/homebrew/Cellar/whisper-cpp)
           cp "$(find /opt/homebrew/Cellar/whisper-cpp/$WHISPER_VER/lib -name 'libwhisper.*.dylib' | head -1)" \
