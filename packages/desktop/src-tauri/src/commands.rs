@@ -4,13 +4,15 @@ use std::{env, fs};
 
 /// 创建不弹窗的 Command（Windows 上加 CREATE_NO_WINDOW）
 fn silent_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new(program);
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        return cmd;
     }
-    cmd
+    #[cfg(not(windows))]
+    Command::new(program)
 }
 
 use chrono::Utc;
