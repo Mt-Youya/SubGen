@@ -1,4 +1,5 @@
 import { SubtitleGenerator } from "@/components/SubtitleGenerator";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 export default function Home() {
   return (
@@ -15,8 +16,12 @@ export default function Home() {
         }}
       />
 
-      <header className="relative z-10 px-6 pt-10 pb-0 text-center">
-        <div className="inline-flex items-center gap-2 mb-6">
+      <header className="relative z-10 px-6 pt-6 pb-0 text-center">
+        {/* 右上角主题切换 */}
+        <div className="absolute top-4 right-4">
+          <ThemeToggle />
+        </div>
+        <div className="inline-flex items-center gap-2 mb-6 mt-4">
           <span
             className="text-xs font-medium px-2.5 py-1 rounded-full"
             style={{

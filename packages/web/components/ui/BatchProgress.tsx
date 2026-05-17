@@ -77,9 +77,11 @@ export function BatchProgress({ files, currentIndex }: BatchProgressProps) {
         {/* 整体进度条 */}
         <div className="h-2 rounded-full overflow-hidden" style={{ background: "var(--color-surface-3)" }}>
           <div
-            className="h-full rounded-full transition-all duration-500"
+            className="h-full rounded-full"
             style={{
-              width: `${batchPct}%`,
+              transform: `scaleX(${batchPct / 100})`,
+              transformOrigin: "left",
+              transition: "transform 0.5s ease-out",
               background: "var(--color-accent)",
               boxShadow: "0 0 10px var(--color-accent-glow)",
             }}

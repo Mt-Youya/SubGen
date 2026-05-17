@@ -16,13 +16,16 @@ Output with CHINESE.
 |------|------|
 | `packages/desktop/src-tauri/src/commands.rs` | 所有 Rust 命令（转录、翻译、依赖检查） |
 | `packages/desktop/src-tauri/src/lib.rs` | Tauri 命令注册 |
-| `packages/desktop/app/page.tsx` | 桌面版首页（依赖检查 + 标签切换） |
-| `packages/desktop/components/DesktopSubtitlePanel.tsx` | 字幕生成面板（设置 + 文件列表 + 结果） |
+| `packages/desktop/app/page.tsx` | 桌面版首页（依赖检查 + Tab 切换 + ThemeToggle） |
+| `packages/desktop/components/DesktopSubtitlePanel.tsx` | 字幕生成面板（设置 + 文件列表 + 结果 + 停止/重试） |
+| `packages/desktop/components/ExtractPanel.tsx` | 音频提取面板（多文件/文件夹 + 进度 + 结果） |
+| `packages/web/app/globals.css` | 全局 CSS 变量（配色 / 字体 / 圆角，dark/light/system 三主题） |
+| `packages/web/components/ui/ThemeToggle.tsx` | 主题切换组件（浅色/深色/跟随系统，持久化 localStorage） |
 | `packages/desktop/src-tauri/tauri.windows.conf.json` | Windows 平台 bundle 资源声明 |
 | `packages/desktop/src-tauri/tauri.macos.conf.json` | macOS 平台 bundle 资源声明 |
 | `packages/desktop/src-tauri/tauri.linux.conf.json` | Linux 平台 bundle 资源声明 |
 | `packages/desktop/src-tauri/.cargo/config.toml` | Rust 链接器配置（`rust-lld`） |
-| `.github/workflows/build-desktop.yml` | Desktop CI（tag: `desktop-v*`） |
+| `.github/workflows/build-desktop.yml` | Desktop CI（tag: `desktop-v*`）；Linux whisper.cpp tag 取失败时 fallback 到 v1.7.4 |
 | `.github/workflows/build-extractor.yml` | Extractor CI（tag: `extractor-v*`） |
 
 ## 桌面版依赖

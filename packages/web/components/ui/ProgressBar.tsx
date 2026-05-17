@@ -136,8 +136,8 @@ export function ProgressBar({ step, taskProgress, uploadLabel, filename }: Progr
           </div>
           <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: "var(--color-surface-3)" }}>
             <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{ width: `${totalPct}%`, background: "var(--color-accent)", boxShadow: "0 0 8px var(--color-accent-glow)" }}
+              className="h-full rounded-full"
+              style={{ transform: `scaleX(${totalPct / 100})`, transformOrigin: "left", transition: "transform 0.5s ease-out", background: "var(--color-accent)", boxShadow: "0 0 8px var(--color-accent-glow)" }}
             />
           </div>
         </div>
@@ -159,8 +159,8 @@ export function ProgressBar({ step, taskProgress, uploadLabel, filename }: Progr
           </div>
           <div className="w-full h-0.5 rounded-full overflow-hidden" style={{ background: "var(--color-surface-3)" }}>
             <div
-              className="h-full rounded-full transition-all duration-300"
-              style={{ width: `${stagePct}%`, background: stageColor }}
+              className="h-full rounded-full"
+              style={{ transform: `scaleX(${stagePct / 100})`, transformOrigin: "left", transition: "transform 0.3s ease-out", background: stageColor }}
             />
           </div>
         </div>

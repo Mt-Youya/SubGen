@@ -1,34 +1,71 @@
 @import "tailwindcss";
 
 @theme {
-  /* OKLCH color palette — dark theme, tinted neutrals toward indigo */
-  --color-surface-0: oklch(10% 0.012 265);
-  --color-surface-1: oklch(13% 0.014 265);
-  --color-surface-2: oklch(16% 0.016 265);
-  --color-surface-3: oklch(20% 0.018 265);
-  --color-border: oklch(28% 0.022 265);
-  --color-border-subtle: oklch(22% 0.018 265);
+  /* Midnight Blue / Electric Violet palette */
+  --color-accent:       #6366F1;
+  --color-accent-hover: #4F46E5;
+  --color-accent-light: #EEF0FF;
+  --color-accent-track: #A5B4FC;
+  --color-accent-muted: rgba(99, 102, 241, 0.14);
+  --color-accent-glow:  rgba(99, 102, 241, 0.28);
+  --color-accent-dim:   #818CF8;
 
-  --color-text-primary: oklch(95% 0.008 265);
-  --color-text-secondary: oklch(68% 0.018 265);
-  --color-text-tertiary: oklch(48% 0.016 265);
+  --color-highlight:       #8B5CF6;
+  --color-highlight-muted: rgba(139, 92, 246, 0.14);
 
-  --color-accent: oklch(65% 0.22 265);
-  --color-accent-hover: oklch(70% 0.22 265);
-  --color-accent-muted: oklch(65% 0.22 265 / 12%);
-  --color-accent-glow: oklch(65% 0.22 265 / 20%);
-
-  --color-success: oklch(72% 0.16 145);
-  --color-danger: oklch(65% 0.20 20);
+  --color-success: #34D399;
+  --color-danger:  oklch(65% 0.20 20);
   --color-warning: oklch(78% 0.16 75);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
-  --font-mono: "Berkeley Mono", "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  --font-sans:    "Sora", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: "Sora", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono:    "JetBrains Mono", "Fira Code", ui-monospace, monospace;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
+  --radius-sm: 4px;
+  --radius-md: 7px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+}
+
+/* ── Dark theme (default) ── */
+:root {
+  --color-surface-0: #0D0D1A;
+  --color-surface-1: #1A1A2E;
+  --color-surface-2: #16213E;
+  --color-surface-3: #0F3460;
+  --color-border: rgba(99, 102, 241, 0.22);
+  --color-border-subtle: rgba(99, 102, 241, 0.10);
+  --color-text-primary: #EEF0FF;
+  --color-text-secondary: #A5B4FC;
+  --color-text-tertiary: #6366F1;
+}
+
+/* ── Light theme ── */
+:root[data-theme="light"] {
+  --color-surface-0: #F5F3FF;
+  --color-surface-1: #FFFFFF;
+  --color-surface-2: #EDE9FE;
+  --color-surface-3: #DDD6FE;
+  --color-border: rgba(99, 102, 241, 0.28);
+  --color-border-subtle: rgba(99, 102, 241, 0.14);
+  --color-text-primary: #1E1B4B;
+  --color-text-secondary: #3730A3;
+  --color-text-tertiary: #6366F1;
+}
+
+/* ── System preference fallback ── */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --color-surface-0: #F5F3FF;
+    --color-surface-1: #FFFFFF;
+    --color-surface-2: #EDE9FE;
+    --color-surface-3: #DDD6FE;
+    --color-border: rgba(99, 102, 241, 0.28);
+    --color-border-subtle: rgba(99, 102, 241, 0.14);
+    --color-text-primary: #1E1B4B;
+    --color-text-secondary: #3730A3;
+    --color-text-tertiary: #6366F1;
+  }
 }
 
 *, *::before, *::after {
@@ -38,6 +75,7 @@
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: var(--color-surface-0);
 }
 
 body {
@@ -45,6 +83,10 @@ body {
   color: var(--color-text-primary);
   font-family: var(--font-sans);
   min-height: 100dvh;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
 }
 
 ::selection {
