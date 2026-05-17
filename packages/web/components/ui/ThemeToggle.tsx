@@ -61,7 +61,7 @@ export function ThemeToggle() {
   }
 
   return (
-    <div className="inline-flex p-0.5"
+    <div className="inline-flex p-0.5 overflow-hidden"
       style={{ background: "var(--color-surface-2)", border: "0.5px solid var(--color-border-subtle)", borderRadius: "var(--radius-md)" }}>
       {THEMES.map((t) => (
         <button
@@ -73,7 +73,7 @@ export function ThemeToggle() {
             borderRadius: "var(--radius-sm)",
             background: theme === t.value ? "var(--color-accent-muted)" : "transparent",
             color: theme === t.value ? "var(--color-accent)" : "var(--color-text-tertiary)",
-            boxShadow: theme === t.value ? "0 0 0 1px var(--color-border)" : "none",
+            boxShadow: "none",
           }}>
           {t.icon}
           <span className="hidden sm:inline">{t.label}</span>

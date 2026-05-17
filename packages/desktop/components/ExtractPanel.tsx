@@ -355,8 +355,12 @@ export function ExtractPanel() {
       {(status === "extracting" || status === "done" || status === "error") && inputs.length > 0 && (
         <div className="rounded-md overflow-hidden"
           style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}>
-          <div className="px-4 py-3 text-xs" style={{ color: "var(--color-text-tertiary)", borderBottom: "1px solid var(--color-border-subtle)" }}>
-            {inputs.length} 个文件
+          <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
+            <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>提取队列</span>
+            <span className="px-2.5 py-0.5 rounded-full text-xs font-medium"
+              style={{ background: "var(--color-accent-muted)", color: "var(--color-accent)", border: "0.5px solid rgba(99,102,241,0.25)" }}>
+              {inputs.length} 个文件
+            </span>
           </div>
           <div className="divide-y" style={{ borderColor: "var(--color-border-subtle)" }}>
             {inputs.map((f, i) => {
@@ -403,29 +407,30 @@ export function ExtractPanel() {
 
                     {/* 文件名 + 大小 / 进度条 */}
                     <div className="flex-1 min-w-0">
+                      {/* 第一行：视频文件名 + 视频大小 */}
                       <p className="text-sm font-medium truncate" style={{ color: "var(--color-text-primary)", fontFamily: "JetBrains Mono, monospace", fontSize: "13px" }}>
-                        {isDone && !hasError && result.output ? basename(result.output) : basename(f)}
+                        {basename(f)}
+                        {inputSizes[i] > 0 && (
+                          <span className="ml-2 text-xs font-normal" style={{ color: "var(--color-text-tertiary)" }}>
+                            {formatBytes(inputSizes[i])}
+                          </span>
+                        )}
                       </p>
                       {isActive && rawProg < 1 ? (
+                        /* 提取中：进度条 */
                         <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "var(--color-accent-track)" }}>
                           <div className="h-full rounded-full"
                             style={{ transform: `scaleX(${prog})`, transformOrigin: "left", background: "var(--color-accent)" }} />
                         </div>
-                      ) : (
-                        (() => {
-                          const size = isDone && result.output_size != null && result.output_size > 0
-                            ? result.output_size
-                            : inputSizes[i];
-                          return size > 0 ? (
-                            <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                              {formatBytes(size)}
-                              {isDone && !hasError && result.output_size != null && result.output_size > 0 && (
-                                <span style={{ color: "var(--color-success)" }}> · WAV</span>
-                              )}
-                            </p>
-                          ) : null;
-                        })()
-                      )}
+                      ) : isDone && !hasError && result.output ? (
+                        /* 第二行：音频文件名 + 音频大小 */
+                        <p className="text-xs truncate" style={{ color: "var(--color-accent)", fontFamily: "JetBrains Mono, monospace" }}>
+                          ↓ {basename(result.output)}
+                          {result.output_size != null && result.output_size > 0 && (
+                            <span style={{ color: "var(--color-text-tertiary)" }}> · {formatBytes(result.output_size)}</span>
+                          )}
+                        </p>
+                      ) : null}
                     </div>
 
                     {/* 右侧：百分比 / 用时 */}

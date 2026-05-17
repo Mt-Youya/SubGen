@@ -1,7 +1,7 @@
 Before generating the commit message, perform these checks in order:
 
 ## 1. Verify local build (macOS only — Windows/Linux verified via CI)
-Run `pnpm build:desktop` inside `packages/desktop` to confirm Next.js + TypeScript compiles with no errors. If it fails, stop and fix first.
+Run `pnpm build:next` inside `packages/desktop` to confirm Next.js + TypeScript compiles with no errors. If it fails, stop and fix first.
 
 ## 2. Check last CI run covers all three platforms
 Run `gh run list --workflow=build-desktop.yml --limit=5` to find the most recent completed run.
