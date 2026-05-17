@@ -147,108 +147,106 @@ export function BatchDropZone({ entries, onFilesAdded, disabled }: BatchDropZone
       />
 
       <div
-        className="rounded-[var(--radius-lg)] transition-all duration-200 cursor-pointer select-none"
+        className="rounded-[var(--radius-lg)] transition-all duration-200 select-none"
         style={{
           background: bgColor,
           border: `1.5px dashed ${borderColor}`,
-          padding: hasFiles ? "20px 24px" : "36px 24px",
           cursor: disabled ? "default" : "pointer",
           opacity: disabled ? 0.7 : 1,
         }}
-        onClick={() => {
-          if (disabled) return;
-          if (hasFiles) multiRef.current?.click();
-          else multiRef.current?.click();
-        }}
+        onClick={() => { if (!disabled) multiRef.current?.click(); }}
         onDragEnter={handleDragEnter}
         onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
         {hasFiles ? (
-          <div className="flex items-center gap-4">
-            <div
-              className="w-10 h-10 rounded-[var(--radius-md)] flex items-center justify-center shrink-0"
-              style={{
-                background: "oklch(72% 0.16 145 / 12%)",
-                color: "var(--color-success)",
-              }}
-            >
+          /* ── 已有文件：紧凑横排 ── */
+          <div className="flex items-center gap-3 px-4 py-3">
+            <div className="w-8 h-8 rounded-[var(--radius-sm)] flex items-center justify-center shrink-0"
+              style={{ background: "oklch(72% 0.16 145 / 15%)", color: "var(--color-success)" }}>
               <FileIcon />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>
-                已选择 {entries.length} 个文件
+                已添加 {entries.length} 个文件
               </p>
               <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                点击添加更多 · 拖放覆盖
+                拖放或点击继续添加
               </p>
             </div>
-            <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-              <button
-                onClick={() => multiRef.current?.click()}
-                className="px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors"
-                style={{
-                  background: "var(--color-surface-3)",
-                  color: "var(--color-text-secondary)",
-                  border: "1px solid var(--color-border-subtle)",
-                }}
-              >
-                选择文件
+            <div className="flex gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => multiRef.current?.click()}
+                className="px-2.5 py-1 text-xs rounded-[var(--radius-sm)] transition-colors"
+                style={{ background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "1px solid var(--color-border-subtle)" }}>
+                + 文件
               </button>
-              <button
-                onClick={() => folderRef.current?.click()}
-                className="px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors"
-                style={{
-                  background: "var(--color-surface-3)",
-                  color: "var(--color-text-secondary)",
-                  border: "1px solid var(--color-border-subtle)",
-                }}
-              >
-                选择文件夹
+              <button onClick={() => folderRef.current?.click()}
+                className="px-2.5 py-1 text-xs rounded-[var(--radius-sm)] transition-colors"
+                style={{ background: "var(--color-surface-3)", color: "var(--color-text-secondary)", border: "1px solid var(--color-border-subtle)" }}>
+                + 文件夹
               </button>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-3">
-            <div style={{ color: "var(--color-text-tertiary)" }}>
-              <FileIcon />
+          /* ── 空状态：大号引导区 ── */
+          <div className="flex flex-col items-center gap-4 py-10 px-6 text-center">
+            {/* 拖拽图标 */}
+            <div className="w-16 h-16 rounded-[var(--radius-lg)] flex items-center justify-center"
+              style={{ background: dragging ? "var(--color-accent-muted)" : "var(--color-surface-2)", border: "1px solid var(--color-border-subtle)" }}>
+              {dragging ? (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ color: "var(--color-accent)" }}>
+                  <path d="M12 15V3m0 12-4-4m4 4 4-4" />
+                  <path d="M2 17v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2" />
+                </svg>
+              ) : (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ color: "var(--color-text-tertiary)" }}>
+                  <rect x="2" y="4" width="20" height="16" rx="3" />
+                  <path d="m10 9 5 3-5 3V9Z" />
+                </svg>
+              )}
             </div>
-            <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
-              拖放文件，或点击选择
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  multiRef.current?.click();
-                }}
-                className="px-4 py-2 text-sm rounded-[var(--radius-md)] transition-colors"
-                style={{
-                  background: "var(--color-accent)",
-                  color: "white",
-                }}
-              >
-                选择文件
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  folderRef.current?.click();
-                }}
-                className="px-4 py-2 text-sm rounded-[var(--radius-md)] transition-colors"
-                style={{
-                  background: "var(--color-surface-3)",
-                  color: "var(--color-text-secondary)",
-                  border: "1px solid var(--color-border-subtle)",
-                }}
-              >
-                选择文件夹
-              </button>
+
+            {/* 主提示 */}
+            <div className="space-y-1">
+              <p className="text-base font-medium" style={{ color: dragging ? "var(--color-accent)" : "var(--color-text-primary)" }}>
+                {dragging ? "松开即可添加" : "拖放视频或音频文件"}
+              </p>
+              <p className="text-sm" style={{ color: "var(--color-text-tertiary)" }}>
+                支持文件夹，自动递归扫描；单文件自动压缩后上传
+              </p>
             </div>
-            <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-              MP4 · MKV · MP3 · WAV · M4A 等 · 自动压缩后上传
-            </p>
+
+            {/* 按钮组 */}
+            {!dragging && (
+              <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => multiRef.current?.click()}
+                  className="px-5 py-2 text-sm font-medium rounded-[var(--radius-md)] transition-all"
+                  style={{ background: "var(--color-accent)", color: "white", boxShadow: "0 0 16px var(--color-accent-glow)" }}>
+                  选择文件
+                </button>
+                <button
+                  onClick={() => folderRef.current?.click()}
+                  className="px-5 py-2 text-sm font-medium rounded-[var(--radius-md)] transition-all"
+                  style={{ background: "var(--color-surface-2)", color: "var(--color-text-secondary)", border: "1px solid var(--color-border)" }}>
+                  选择文件夹
+                </button>
+              </div>
+            )}
+
+            {/* 格式提示 */}
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              {["MP4", "MKV", "MOV", "MP3", "WAV", "M4A"].map((fmt) => (
+                <span key={fmt} className="px-2 py-0.5 rounded text-[11px] font-mono"
+                  style={{ background: "var(--color-surface-2)", color: "var(--color-text-tertiary)", border: "1px solid var(--color-border-subtle)" }}>
+                  {fmt}
+                </span>
+              ))}
+              <span className="text-[11px]" style={{ color: "var(--color-text-tertiary)" }}>等</span>
+            </div>
           </div>
         )}
       </div>

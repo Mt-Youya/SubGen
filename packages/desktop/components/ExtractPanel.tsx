@@ -11,6 +11,7 @@ interface ExtractOptions {
 interface ExtractFileResult {
   input: string;
   output: string;
+  output_size?: number;
   elapsed_secs?: number;
   error: string | null;
 }
@@ -44,7 +45,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-const basename = (p: string) => p.split(/[\\/]/).pop() ?? p;
+function basename(p: string) { return p.split(/[\\/]/).pop() ?? p; }
 
 function formatBytes(b: number) {
   if (b >= 1073741824) return (b / 1073741824).toFixed(1) + " GB";
@@ -130,21 +131,71 @@ export function ExtractPanel() {
     return () => cancelAnimationFrame(rafRef.current);
   }, [status]);
 
+  const MEDIA_EXTS = ["mp4", "mkv", "ts", "m2ts", "webm", "avi", "mov", "wmv", "flv"];
+
+  const addPaths = useCallback(async (newPaths: string[]) => {
+    if (newPaths.length === 0) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const sizes = await invoke<number[]>("get_file_sizes", { paths: newPaths }).catch(() => newPaths.map(() => 0));
+    setInputs(prev => {
+      const existing = new Set(prev);
+      const toAdd = newPaths.filter(p => !existing.has(p));
+      if (toAdd.length === 0) return prev;
+      setInputSizes(prevSizes => [
+        ...prevSizes,
+        ...toAdd.map(p => sizes[newPaths.indexOf(p)] ?? 0),
+      ]);
+      return [...prev, ...toAdd];
+    });
+  }, []);
+
   const pickInputs = useCallback(async () => {
     if (!isTauri) return;
     const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
       multiple: true,
-      filters: [{ name: "视频文件", extensions: ["mp4", "mkv", "ts", "m2ts", "webm", "avi", "mov", "wmv", "flv"] }],
+      filters: [{ name: "视频文件", extensions: MEDIA_EXTS }],
     });
     if (selected) {
-      const paths = Array.isArray(selected) ? selected : [selected];
-      setInputs(paths);
-      const { invoke } = await import("@tauri-apps/api/core");
-      const sizes = await invoke<number[]>("get_file_sizes", { paths }).catch(() => paths.map(() => 0));
-      setInputSizes(sizes);
+      await addPaths(Array.isArray(selected) ? selected : [selected]);
     }
-  }, [isTauri]);
+  }, [isTauri, addPaths]);
+
+  const pickFolders = useCallback(async () => {
+    if (!isTauri) return;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const sel = await open({ directory: true, multiple: true });
+    if (!sel) return;
+    const dirs = Array.isArray(sel) ? sel : [sel];
+
+    const { readDir } = await import("@tauri-apps/plugin-fs");
+    const { join } = await import("@tauri-apps/api/path");
+    const extSet = new Set(MEDIA_EXTS);
+
+    async function collectFiles(dir: string): Promise<string[]> {
+      try {
+        const entries = await readDir(dir);
+        const results: string[] = [];
+        for (const entry of entries) {
+          const fullPath = await join(dir, entry.name);
+          if (entry.isDirectory) {
+            results.push(...await collectFiles(fullPath));
+          } else if (entry.isFile) {
+            const ext = entry.name.split(".").pop()?.toLowerCase() ?? "";
+            if (extSet.has(ext)) results.push(fullPath);
+          }
+        }
+        return results;
+      } catch {
+        return [];
+      }
+    }
+
+    const allFiles: string[] = [];
+    for (const dir of dirs) allFiles.push(...await collectFiles(dir));
+    allFiles.sort();
+    await addPaths(allFiles);
+  }, [isTauri, addPaths]);
 
   const pickOutput = useCallback(async () => {
     if (!isTauri) return;
@@ -186,27 +237,34 @@ export function ExtractPanel() {
 
   return (
     <div className="flex flex-col gap-3 max-w-xl mx-auto w-full">
-      <div className="rounded-2xl p-5 flex flex-col gap-3"
-        style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border-subtle)" }}>
+      <div className="rounded-md p-5 flex flex-col gap-3"
+        style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}>
 
         <Row label="视频文件">
           <div className="flex gap-2">
             <button onClick={pickInputs}
-              className="flex-1 min-w-0 rounded-lg px-3 py-2 text-sm text-left truncate"
+              className="flex-1 min-w-0 rounded-md px-3 py-2 text-sm text-left truncate"
               style={{
                 background: "var(--color-surface-2)", border: "1px solid var(--color-border)",
                 color: inputs.length ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
               }}>
               {inputs.length === 0
-                ? "点击选择视频（支持多选）"
+                ? "点击选择文件或文件夹"
                 : inputs.length === 1
                   ? basename(inputs[0])
                   : `已选 ${inputs.length} 个文件`}
             </button>
             <button onClick={pickInputs}
-              className="rounded-lg px-4 py-2 text-sm font-medium shrink-0"
-              style={{ background: "var(--color-surface-3)", color: "var(--color-text-primary)" }}>
-              浏览
+              className="rounded-md px-3 py-2 text-sm font-medium shrink-0"
+              style={{ background: "var(--color-surface-3)", color: "var(--color-text-primary)" }}
+              title="选择文件">
+              文件
+            </button>
+            <button onClick={pickFolders}
+              className="rounded-md px-3 py-2 text-sm font-medium shrink-0"
+              style={{ background: "var(--color-surface-3)", color: "var(--color-text-primary)" }}
+              title="选择文件夹（自动递归扫描）">
+              文件夹
             </button>
           </div>
         </Row>
@@ -217,7 +275,7 @@ export function ExtractPanel() {
               {inputs.map((f, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs"
                   style={{ color: "var(--color-text-tertiary)" }}>
-                  {inputs.length > 1 && <span className="shrink-0">{i + 1}.</span>}
+                  <span style={{ fontSize: "11px", fontFamily: "JetBrains Mono, monospace", color: "var(--color-text-tertiary)", width: "18px", flexShrink: 0 }}>{i + 1}.</span>
                   <span className="truncate flex-1">{basename(f)}</span>
                   {inputSizes[i] != null && inputSizes[i] > 0 && (
                     <span className="shrink-0 tabular-nums">{formatBytes(inputSizes[i])}</span>
@@ -231,7 +289,7 @@ export function ExtractPanel() {
         <Row label="输出目录">
           <div className="flex gap-2">
             <button onClick={pickOutput}
-              className="flex-1 min-w-0 rounded-lg px-3 py-2 text-sm text-left truncate"
+              className="flex-1 min-w-0 rounded-md px-3 py-2 text-sm text-left truncate"
               style={{
                 background: "var(--color-surface-2)", border: "1px solid var(--color-border)",
                 color: outputDir ? "var(--color-text-primary)" : "var(--color-text-tertiary)",
@@ -239,7 +297,7 @@ export function ExtractPanel() {
               {outputDir ? basename(outputDir) : "点击选择保存目录"}
             </button>
             <button onClick={pickOutput}
-              className="rounded-lg px-4 py-2 text-sm font-medium shrink-0"
+              className="rounded-md px-4 py-2 text-sm font-medium shrink-0"
               style={{ background: "var(--color-surface-3)", color: "var(--color-text-primary)" }}>
               浏览
             </button>
@@ -250,7 +308,7 @@ export function ExtractPanel() {
           <div className="flex items-center gap-2">
             <input type="number" min={0} value={duration}
               onChange={e => setDuration(Number(e.target.value))}
-              className="w-24 rounded-lg px-3 py-2 text-sm outline-none"
+              className="w-24 rounded-md px-3 py-2 text-sm outline-none"
               style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)" }} />
             <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>0 = 完整</span>
           </div>
@@ -258,67 +316,140 @@ export function ExtractPanel() {
 
         <button onClick={handleExtract}
           disabled={!inputs.length || !outputDir || status === "extracting"}
-          className="mt-1 w-full rounded-xl py-2.5 text-sm font-semibold transition-opacity disabled:opacity-40"
-          style={{ background: "var(--color-accent)", color: "white" }}>
-          {status === "extracting" ? "提取中..." : "开始提取"}
+          className="mt-1 w-full rounded-md py-2.5 text-sm font-semibold transition-opacity disabled:opacity-40"
+          style={{ background: "var(--color-accent)", color: "white" }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--color-accent-hover)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--color-accent)"; }}>
+          {status === "extracting"
+            ? `提取中 (${fileProgress.filter(p => p >= 1).length}/${inputs.length})...`
+            : "开始提取"}
         </button>
 
-        {status === "extracting" && (
-          <div>
-            <div className="flex justify-between text-xs mb-1.5" style={{ color: "var(--color-text-tertiary)" }}>
-              <span>{progressMessage}</span>
-              <span>{Math.round(overallDisplay * 100)}%</span>
-            </div>
-            {/* 多文件时显示每个文件的进度条 */}
-            {inputs.length > 1 ? (
-              <div className="flex flex-col gap-1.5">
-                {inputs.map((f, i) => (
-                  <div key={i}>
-                    <div className="flex justify-between text-xs mb-0.5" style={{ color: "var(--color-text-tertiary)" }}>
-                      <span className="truncate max-w-[200px]">{basename(f)}</span>
-                      <span>{Math.round((displayProgress[i] ?? 0) * 100)}%</span>
-                    </div>
-                    <div className="h-1 rounded-full overflow-hidden" style={{ background: "var(--color-surface-3)" }}>
-                      <div className="h-full rounded-full transition-none"
-                        style={{ width: `${Math.round((displayProgress[i] ?? 0) * 100)}%`, background: "var(--color-accent)" }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="h-1 rounded-full overflow-hidden" style={{ background: "var(--color-surface-3)" }}>
-                <div className="h-full rounded-full"
-                  style={{ width: `${Math.round(overallDisplay * 100)}%`, background: "var(--color-accent)" }} />
-              </div>
-            )}
-          </div>
-        )}
-
         {status === "error" && (
-          <div className="rounded-xl px-4 py-3 text-sm"
+          <div className="rounded-md px-4 py-3 text-sm"
             style={{ background: "oklch(65% 0.20 20 / 8%)", color: "var(--color-danger)" }}>
             ✗ {error}
           </div>
         )}
       </div>
 
-      {status === "done" && results.length > 0 && (
-        <div className="rounded-2xl p-4 flex flex-col gap-2"
-          style={{ background: "oklch(72% 0.16 145 / 8%)", border: "1px solid oklch(72% 0.16 145 / 20%)" }}>
-          {results.map((r, i) => (
-            <div key={i} className="flex items-center justify-between gap-2 text-sm">
-              {r.error ? (
-                <span style={{ color: "var(--color-danger)" }}>✗ {basename(r.input)}: {r.error}</span>
-              ) : (
-                <span style={{ color: "var(--color-success)" }}>✓ {basename(r.output)}</span>
-              )}
-              {r.elapsed_secs != null && !r.error && (
-                <span className="text-xs shrink-0" style={{ color: "var(--color-text-tertiary)" }}>
-                  {r.elapsed_secs.toFixed(1)}s
-                </span>
-              )}
+      {/* ── 批量完成 header ── */}
+      {status === "done" && results.length > 0 && (() => {
+        const doneCount = results.filter(r => !r.error).length;
+        const errCount = results.filter(r => r.error).length;
+        return (
+          <div className="flex items-center justify-between px-4 py-3 rounded-md"
+            style={{ background: "var(--color-accent-muted)", border: "1px solid oklch(65% 0.22 265 / 20%)" }}>
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--color-accent)" }} />
+              <span className="text-sm" style={{ color: "var(--color-accent)" }}>提取完成</span>
             </div>
-          ))}
+            <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+              {doneCount} 个成功{errCount > 0 && ` · ${errCount} 个失败`}
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* ── 文件任务列表 ── */}
+      {(status === "extracting" || status === "done" || status === "error") && inputs.length > 0 && (
+        <div className="rounded-md overflow-hidden"
+          style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}>
+          <div className="px-4 py-3 text-xs" style={{ color: "var(--color-text-tertiary)", borderBottom: "1px solid var(--color-border-subtle)" }}>
+            {inputs.length} 个文件
+          </div>
+          <div className="divide-y" style={{ borderColor: "var(--color-border-subtle)" }}>
+            {inputs.map((f, i) => {
+              const prog = displayProgress[i] ?? 0;
+              const rawProg = fileProgress[i] ?? 0;
+              const result = results[i];
+              const isDone = status === "done" && result != null;
+              const isActive = status === "extracting";
+              const hasError = isDone && !!result.error;
+
+              return (
+                <div key={i} style={{ borderColor: "var(--color-border-subtle)" }}>
+                  <div className="px-4 py-3 flex items-center gap-3"
+                    style={{ background: isActive ? "var(--color-surface-2)" : "transparent" }}>
+                    {/* 序号 */}
+                    <span style={{ fontSize: "11px", fontFamily: "JetBrains Mono, monospace", color: "var(--color-text-tertiary)", width: "18px", flexShrink: 0 }}>{i + 1}.</span>
+                    {/* 状态图标 */}
+                    <div className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center"
+                      style={{ background: "var(--color-surface-2)", color: "var(--color-text-secondary)" }}>
+                      {isActive ? (
+                        rawProg >= 1 ? (
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                            <circle cx="8" cy="8" r="7" stroke="oklch(65% 0.15 145)" strokeWidth="1.5" />
+                            <path d="M5 8l2.5 2.5L11 5.5" stroke="oklch(65% 0.15 145)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        ) : (
+                          <span className="w-3 h-3 rounded-full border-2 animate-spin"
+                            style={{ borderColor: "var(--color-accent) var(--color-accent-track) var(--color-accent-track) var(--color-accent-track)" }} />
+                        )
+                      ) : hasError ? (
+                        <span style={{ color: "var(--color-danger)" }}>✗</span>
+                      ) : isDone ? (
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                          <circle cx="8" cy="8" r="7" stroke="oklch(65% 0.15 145)" strokeWidth="1.5" />
+                          <path d="M5 8l2.5 2.5L11 5.5" stroke="oklch(65% 0.15 145)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="4" width="20" height="16" rx="2" />
+                          <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
+                        </svg>
+                      )}
+                    </div>
+
+                    {/* 文件名 + 大小 / 进度条 */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate" style={{ color: "var(--color-text-primary)", fontFamily: "JetBrains Mono, monospace", fontSize: "13px" }}>
+                        {isDone && !hasError && result.output ? basename(result.output) : basename(f)}
+                      </p>
+                      {isActive && rawProg < 1 ? (
+                        <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "var(--color-accent-track)" }}>
+                          <div className="h-full rounded-full"
+                            style={{ transform: `scaleX(${prog})`, transformOrigin: "left", background: "var(--color-accent)" }} />
+                        </div>
+                      ) : (
+                        (() => {
+                          const size = isDone && result.output_size != null && result.output_size > 0
+                            ? result.output_size
+                            : inputSizes[i];
+                          return size > 0 ? (
+                            <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+                              {formatBytes(size)}
+                              {isDone && !hasError && result.output_size != null && result.output_size > 0 && (
+                                <span style={{ color: "var(--color-success)" }}> · WAV</span>
+                              )}
+                            </p>
+                          ) : null;
+                        })()
+                      )}
+                    </div>
+
+                    {/* 右侧：百分比 / 用时 */}
+                    <div className="shrink-0 text-xs tabular-nums" style={{ color: "var(--color-text-tertiary)" }}>
+                      {isActive && rawProg < 1
+                        ? `${Math.round(prog * 100)}%`
+                        : isDone && !hasError && result.elapsed_secs != null
+                          ? `${result.elapsed_secs.toFixed(1)}s`
+                          : isDone && hasError
+                            ? <span style={{ color: "var(--color-danger)" }}>失败</span>
+                            : null}
+                    </div>
+                  </div>
+
+                  {/* 错误详情 */}
+                  {isDone && hasError && (
+                    <div className="px-4 pb-3 text-xs" style={{ color: "var(--color-danger)" }}>
+                      {result.error}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

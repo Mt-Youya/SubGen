@@ -37,6 +37,7 @@ pub struct ExtractOptions {
 pub struct ExtractFileResult {
     pub input: String,
     pub output: String,
+    pub output_size: Option<u64>,
     pub elapsed_secs: Option<f64>,
     pub error: Option<String>,
 }
@@ -589,12 +590,15 @@ async fn split_audio_for_asr(
                 }
             } else if let Some(val) = line.strip_prefix("out_time_us=") {
                 if let Ok(us) = val.trim().parse::<f64>() {
-                    let ratio = if total_us > 0.0 { (us / total_us).min(0.95) } else { 0.3 };
+                    // 留出最后 5% 给 stdout 关闭→child.wait() 之间的收尾写盘
+                    let ratio = if total_us > 0.0 { (us / total_us).min(0.90) } else { 0.3 };
                     emit_progress(&app_clone, "extracting", ratio * 0.3,
                         format!("提取音频 {:.0}%", ratio * 100.0));
                 }
             }
         }
+        // stdout 关闭即代表 ffmpeg 已完成主要处理，直接推满到提取完成值
+        emit_progress(&app_clone, "extracting", 0.30, "音频提取完成");
 
         let status = child.wait()
             .map_err(|e| format!("ffmpeg 等待失败: {e}"))?;
@@ -1348,9 +1352,12 @@ pub async fn extract_audio(app: AppHandle, opts: ExtractOptions) -> Result<Extra
                 "elapsed_secs": elapsed,
             }));
 
+            let output_path = result.as_deref().unwrap_or("").to_string();
+            let output_size = fs::metadata(&output_path).ok().map(|m| m.len());
             ExtractFileResult {
                 input: input_str,
-                output: result.as_deref().unwrap_or("").to_string(),
+                output: output_path,
+                output_size,
                 elapsed_secs: Some(elapsed),
                 error: result.err(),
             }
@@ -1434,18 +1441,12 @@ pub async fn generate_subtitles(
                 .unwrap_or(false);
 
             if use_server {
-                // ── whisper-server 多实例并发模式 ──
-                // 实例数：根据内存估算，small=~800MB，以物理内存20%为上限，最少1最多4
-                let n_instances = {
-                    let cpus = num_cpus();
-                    // 每个 whisper-server 实例占用约 800MB GPU/unified memory
-                    // 保守取 min(cpus/2, 4)，避免 OOM
-                    (cpus / 2).max(1).min(4)
-                };
+                // 单实例模式：一个 whisper-server 用满所有线程，比多实例互抢资源更快
+                let n_instances = 1usize;
                 let base_port: u16 = 18200;
 
-                emit_progress(&app, "loading_model", 0.05,
-                    format!("正在启动 {} 个 Whisper 实例（{}）...", n_instances, model_name));
+                emit_progress(&app, "loading_model", 0.32,
+                    format!("正在加载 Whisper 模型（{}）...", model_name));
 
                 // 启动所有实例
                 let mut servers = Vec::new();
@@ -1484,14 +1485,13 @@ pub async fn generate_subtitles(
                     }
                     let n_ready = ready.iter().filter(|&&r| r).count();
                     if n_ready == n_instances {
-                        emit_progress(&app, "loading_model", 0.1,
-                            format!("全部 {} 个实例就绪，开始并发转录...", n_instances));
+                        emit_progress(&app, "loading_model", 0.38, "模型就绪，开始转录...");
                         break;
                     }
                     let elapsed = start.elapsed().as_secs();
                     if elapsed % 5 == 0 && elapsed > 0 {
-                        emit_progress(&app, "loading_model", 0.08,
-                            format!("正在加载模型 {}/{} 就绪... ({elapsed}s)", n_ready, n_instances));
+                        emit_progress(&app, "loading_model", 0.34,
+                            format!("正在加载模型... ({elapsed}s)"));
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 }
@@ -1517,7 +1517,7 @@ pub async fn generate_subtitles(
                         let result = transcribe_with_whisper_server(&client, port, &chunk, &lang, offset).await;
                         let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                         emit_progress(&app, "transcribing",
-                            0.1 + 0.55 * (done as f64 / total as f64),
+                            0.38 + 0.28 * (done as f64 / total as f64),
                             format!("转录完成 {done}/{total}"));
                         result.map(|s| (i, s))
                     }));
@@ -1555,7 +1555,7 @@ pub async fn generate_subtitles(
                         let result = transcribe_with_whisper_legacy(&whisper, &model, &chunk, &lang, offset).await;
                         let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                         emit_progress(&app, "transcribing",
-                            0.1 + 0.55 * (done as f64 / total as f64),
+                            0.38 + 0.28 * (done as f64 / total as f64),
                             format!("转录完成 {done}/{total}"));
                         result.map(|s| (i, s))
                     }));
@@ -1612,7 +1612,7 @@ pub async fn generate_subtitles(
                     Ok(Ok(r)) => {
                         let done = results.len() + 1;
                         emit_progress(&app, "transcribing",
-                            0.1 + 0.55 * (done as f64 / total as f64),
+                            0.32 + 0.33 * (done as f64 / total as f64),
                             format!("转录完成 {done}/{total}..."));
                         results.push(r);
                     }

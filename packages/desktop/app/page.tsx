@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { DesktopSubtitlePanel } from "@/components/DesktopSubtitlePanel";
 import { ExtractPanel } from "@/components/ExtractPanel";
+import { ThemeToggle } from "../../web/components/ui/ThemeToggle";
 
 type Tab = "subtitle" | "extract";
 
@@ -39,7 +40,7 @@ function DepsBanner({
     const label = downloadingWhat === "ffmpeg" ? "ffmpeg" : "Whisper 中文模型";
     return (
       <div
-        className="mx-auto mt-4 max-w-xl rounded-xl px-5 py-4 text-sm flex items-center gap-3"
+        className="mx-auto mt-4 max-w-xl rounded-md px-5 py-4 text-sm flex items-center gap-3"
         style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)" }}
       >
         <svg className="animate-spin shrink-0" width="16" height="16" viewBox="0 0 16 16" fill="none"
@@ -53,7 +54,7 @@ function DepsBanner({
 
   if (state === "error") {
     return (
-      <div className="mx-auto mt-4 max-w-xl rounded-xl px-5 py-4 text-sm"
+      <div className="mx-auto mt-4 max-w-xl rounded-md px-5 py-4 text-sm"
         style={{ background: "oklch(65% 0.20 20 / 8%)", border: "1px solid oklch(65% 0.20 20 / 20%)", color: "var(--color-danger)" }}>
         ✗ {error}
       </div>
@@ -80,7 +81,7 @@ function DepsBanner({
       {missing.map(m => (
         <div
           key={m.what}
-          className="rounded-xl px-5 py-4 flex items-start gap-4"
+          className="rounded-md px-5 py-4 flex items-start gap-4"
           style={{ background: "var(--color-surface-1)", border: "1px solid var(--color-border-subtle)" }}
         >
           <div className="flex-1">
@@ -93,7 +94,7 @@ function DepsBanner({
           </div>
           <button
             onClick={() => onDownload(m.what)}
-            className="shrink-0 rounded-lg px-4 py-2 text-sm font-medium"
+            className="shrink-0 rounded-md px-4 py-2 text-sm font-medium"
             style={{ background: "var(--color-accent)", color: "white" }}
           >
             授权安装
@@ -105,7 +106,7 @@ function DepsBanner({
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("subtitle");
+  const [tab, setTab] = useState<Tab>("extract");
   const [deps, setDeps] = useState<Deps | null>(null);
   const [depState, setDepState] = useState<DepState>("checking");
   const [depError, setDepError] = useState("");
@@ -151,7 +152,10 @@ export default function Home() {
 
   return (
     <div className="min-h-dvh flex flex-col">
-      <header className="px-6 pt-8 pb-0 text-center">
+      <header className="relative px-6 pt-6 pb-0 text-center">
+        <div className="absolute top-4 right-4">
+          <ThemeToggle />
+        </div>
         <h1
           className="text-3xl font-semibold tracking-tight mb-6"
           style={{ color: "var(--color-text-primary)" }}
@@ -160,25 +164,25 @@ export default function Home() {
         </h1>
 
         <div
-          className="inline-flex rounded-xl p-1 gap-1"
-          style={{ background: "var(--color-surface-2)" }}
+          className="inline-flex rounded-md p-1 gap-1"
+          style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}
         >
           {(
             [
-              { key: "subtitle", label: "字幕生成" },
               { key: "extract", label: "音频提取" },
+              { key: "subtitle", label: "字幕生成" },
             ] as { key: Tab; label: string }[]
           ).map(({ key, label }) => (
             <button
               key={key}
               onClick={() => setTab(key)}
-              className="px-5 py-2 rounded-lg text-sm font-medium transition-all"
+              className="px-5 py-2 rounded-md text-sm font-medium transition-all"
               style={
                 tab === key
                   ? {
-                      background: "var(--color-surface-0)",
-                      color: "var(--color-text-primary)",
-                      boxShadow: "0 1px 3px oklch(0% 0 0 / 30%)",
+                      background: "var(--color-accent)",
+                      color: "#fff",
+                      boxShadow: "0 2px 8px var(--color-accent-glow)",
                     }
                   : { color: "var(--color-text-secondary)" }
               }
