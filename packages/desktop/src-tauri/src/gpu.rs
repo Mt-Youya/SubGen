@@ -238,8 +238,20 @@ fn get_nvidia_name_linux() -> String {
 }
 
 /// GPU 二进制缓存目录
+/// - Windows: 跟随 exe 所在目录（用户装哪就在哪）
+/// - macOS/Linux: ~/.subgen_cache/bin/（系统安装目录可能只读）
 pub fn gpu_bin_dir() -> PathBuf {
-    super::commands::dirs_cache().join("bin")
+    #[cfg(target_os = "windows")]
+    {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("bin")))
+            .unwrap_or_else(|| super::commands::dirs_cache().join("bin"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        super::commands::dirs_cache().join("bin")
+    }
 }
 
 /// 构建 GPU variant 下载文件名

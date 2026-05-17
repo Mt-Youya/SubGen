@@ -251,8 +251,22 @@ fn resolve_binary(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     Err(format!("未找到 {name}，请重新安装 SubGen"))
 }
 
+fn models_dir() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("models")))
+            .unwrap_or_else(|| dirs_cache().join("models"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs_cache().join("models")
+    }
+}
+
 fn model_path(name: &str) -> PathBuf {
-    dirs_cache().join("models").join(format!("ggml-{name}.bin"))
+    models_dir().join(format!("ggml-{name}.bin"))
 }
 
 /// 默认模型路径（兜底用 small）
@@ -465,7 +479,7 @@ pub fn check_whisper_model(app: AppHandle, model: Option<String>) -> serde_json:
     })
 }
 
-/// 下载指定模型到 ~/.subgen_cache/models/
+/// 下载指定模型（Windows 跟 exe，macOS/Linux 在 ~/.subgen_cache/models/）
 #[tauri::command]
 pub async fn download_whisper_model(
     app: AppHandle,
