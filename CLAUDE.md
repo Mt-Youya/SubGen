@@ -1,5 +1,5 @@
-## 语言要求
-所有回答都使用中文。无论上下文有多长都使用中文回答。
+# 语言要求
+所有回答都使用中文。无论上下文有多长都使用中文回答。这是第一优先级，整个项目的重中之重，绝对的核心。
 Output with CHINESE.
 
 # SubGen
@@ -14,8 +14,9 @@ Output with CHINESE.
 
 | 路径 | 说明 |
 |------|------|
-| `packages/desktop/src-tauri/src/commands.rs` | 所有 Rust 命令（转录、翻译、依赖检查） |
+| `packages/desktop/src-tauri/src/commands.rs` | 所有 Rust 命令（转录、翻译、依赖检查、GPU 下载/安装） |
 | `packages/desktop/src-tauri/src/lib.rs` | Tauri 命令注册 |
+| `packages/desktop/src-tauri/src/gpu.rs` | GPU 检测模块（CUDA/Vulkan/Metal 跨平台） |
 | `packages/desktop/app/page.tsx` | 桌面版首页（依赖检查 + Tab 切换 + ThemeToggle） |
 | `packages/desktop/components/DesktopSubtitlePanel.tsx` | 字幕生成面板（设置 + 文件列表 + 结果 + 停止/重试） |
 | `packages/desktop/components/ExtractPanel.tsx` | 音频提取面板（多文件/文件夹 + 进度 + 结果） |
@@ -25,7 +26,8 @@ Output with CHINESE.
 | `packages/desktop/src-tauri/tauri.macos.conf.json` | macOS 平台 bundle 资源声明 |
 | `packages/desktop/src-tauri/tauri.linux.conf.json` | Linux 平台 bundle 资源声明 |
 | `packages/desktop/src-tauri/.cargo/config.toml` | Rust 链接器配置（`rust-lld`） |
-| `.github/workflows/build-desktop.yml` | Desktop CI（tag: `desktop-v*`）；Linux whisper.cpp tag 取失败时 fallback 到 v1.7.4 |
+| `.github/workflows/build-desktop.yml` | Desktop CI（tag: `desktop-v*`）；Linux whisper.cpp tag 取失败时 fallback 到 v1.8.4 |
+| `.github/workflows/build-whisper-gpu.yml` | GPU 二进制构建 CI（CUDA/Vulkan for Win/Linux，tag 触发 + workflow_dispatch） |
 | `.github/workflows/build-extractor.yml` | Extractor CI（tag: `extractor-v*`） |
 
 ## 桌面版依赖
@@ -37,6 +39,7 @@ Output with CHINESE.
 | `whisper.dll` `ggml*.dll` | 同上 | 同上 |
 | `ffmpeg.exe` | 同上 | 同上 |
 | `ggml-small.bin`（模型） | `~/.subgen_cache/models/` | 同路径 |
+| GPU 加速版 whisper | `~/.subgen_cache/bin/` | 同路径（首次启动按需下载） |
 
 二进制文件由 CI 下载或用户通过 UI 授权安装。
 

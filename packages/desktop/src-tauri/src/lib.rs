@@ -1,4 +1,5 @@
 mod commands;
+mod gpu;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,6 +20,10 @@ pub fn run() {
             commands::delete_whisper_model,
             commands::check_dependencies,
             commands::get_file_sizes,
+            commands::detect_gpu,
+            commands::get_gpu_status,
+            commands::download_gpu_whisper,
+            commands::install_gpu_archive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

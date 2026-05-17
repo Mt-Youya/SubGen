@@ -67,6 +67,7 @@ out/
 packages/desktop/src-tauri/gen/
 # desktop resources（平台二进制，CI 构建时动态生成）
 packages/desktop/src-tauri/resources/
+packages/desktop/src-tauri/target-check
 
 # desktop symlinks（指向 web/，避免重复提交）
 packages/desktop/lib

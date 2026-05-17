@@ -289,21 +289,16 @@ function ModelSelect({ value, onChange, downloadedModels, downloadingModel, down
         style={{ background: "var(--color-surface-2)", border: `1px solid ${downloadingInfo && !open ? "var(--color-accent)" : "var(--color-border)"}`, color: "var(--color-text-primary)" }}>
         {downloadingInfo && !open && (
           <div className="absolute inset-0 pointer-events-none"
-            style={{ transform: `scaleX(${downloadingPct / 100})`, transformOrigin: "left", transition: "transform 0.3s ease-out", background: "oklch(50% 0.22 265 / 20%)" }} />
+            style={{ transform: `scaleX(${downloadingPct / 100})`, transformOrigin: "left", transition: "transform 0.3s ease-out", background: "var(--color-accent)" }} />
         )}
         <span className="relative flex items-center gap-2">
-          {downloadingInfo && !open ? (
-            <>
-              <span className="font-medium" style={{ color: "var(--color-accent)" }}>{downloadingInfo.label}</span>
-              <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{downloadingInfo.size}</span>
-              <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{downloadingPct}%</span>
-            </>
-          ) : (
-            <>
-              <span>{selected?.label}</span>
-              <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{selected?.size}</span>
-              {downloadedModels.has(value) && <span className="text-xs" style={{ color: "var(--color-success)" }}>✓</span>}
-            </>
+          <span style={{ color: downloadingInfo && !open ? "var(--color-text-primary)" : "var(--color-text-primary)" }}>{selected?.label}</span>
+          <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{selected?.size}</span>
+          {downloadedModels.has(value) && <span className="text-xs" style={{ color: "var(--color-success)" }}>✓</span>}
+          {downloadingInfo && !open && (
+            <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>
+              (下载中 {downloadingPct}%)
+            </span>
           )}
         </span>
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
@@ -323,20 +318,34 @@ function ModelSelect({ value, onChange, downloadedModels, downloadingModel, down
               <div key={m.name} className="relative">
                 {isDownloading && (
                   <div className="absolute inset-0 pointer-events-none transition-all duration-300"
-                    style={{ width: `${pct}%`, background: "oklch(50% 0.22 265 / 20%)" }} />
+                    style={{
+                      width: `${pct}%`,
+                      background: "var(--color-accent-muted)",
+                    }} />
                 )}
                 <div className="relative flex items-center justify-between px-3 py-2">
-                  <button type="button" disabled={!downloaded}
-                    onClick={() => { if (downloaded) { onChange(m.name); setOpen(false); } }}
-                    className="flex flex-col gap-0.5 flex-1 text-left min-w-0"
-                    style={{ cursor: downloaded ? "pointer" : "default" }}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium" style={{ color: isSelected ? "var(--color-accent)" : downloaded ? "var(--color-text-primary)" : "var(--color-text-tertiary)" }}>{m.label}</span>
-                      <span className="text-xs" style={{ color: "var(--color-text-tertiary)", fontFamily: "JetBrains Mono, monospace" }}>{m.size}</span>
-                      {isDownloading && <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{pct}%</span>}
+                  {downloaded ? (
+                    <button type="button"
+                      onClick={() => { onChange(m.name); setOpen(false); }}
+                      className="flex flex-col gap-0.5 flex-1 text-left min-w-0"
+                      style={{ cursor: "pointer" }}>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium" style={{ color: isSelected ? "var(--color-accent)" : "var(--color-text-primary)" }}>{m.label}</span>
+                        <span className="text-xs" style={{ color: "var(--color-text-tertiary)", fontFamily: "JetBrains Mono, monospace" }}>{m.size}</span>
+                        {isDownloading && <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{pct}%</span>}
+                      </div>
+                      <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{m.desc}</span>
+                    </button>
+                  ) : (
+                    <div className="flex flex-col gap-0.5 flex-1 text-left min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium" style={{ color: "var(--color-text-tertiary)" }}>{m.label}</span>
+                        <span className="text-xs" style={{ color: "var(--color-text-tertiary)", fontFamily: "JetBrains Mono, monospace" }}>{m.size}</span>
+                        {isDownloading && <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{pct}%</span>}
+                      </div>
+                      <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{m.desc}</span>
                     </div>
-                    <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{m.desc}</span>
-                  </button>
+                  )}
                   <div className="flex items-center gap-1 shrink-0 ml-2">
                     {downloaded && !isDownloading && (
                       <>
@@ -429,6 +438,15 @@ export function DesktopSubtitlePanel() {
   const [downloadingModel, setDownloadingModel] = useState<WhisperModel | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
   const [downloadedModels, setDownloadedModels] = useState<Set<WhisperModel>>(new Set());
+  const [gpuStatus, setGpuStatus] = useState<{
+    detected: { gpu_type: string; name: string; available: boolean };
+    active_variant: string;
+    active_is_gpu: boolean;
+    recommended: string;
+    recommended_downloaded: boolean;
+    download_url: string;
+  } | null>(null);
+  const [gpuDownloading, setGpuDownloading] = useState(false);
   const initialized = useRef(false);
 
   const whisperModelRef = useRef(settings.whisperModel);
@@ -493,6 +511,36 @@ export function DesktopSubtitlePanel() {
   useEffect(() => { if (isTauri) checkModel(); }, [isTauri, checkModel]);
   useEffect(() => { if (isTauri) checkModel(); }, [settings.whisperModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 获取 GPU 状态
+  useEffect(() => {
+    if (!isTauri) return;
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke<{
+        detected: { gpu_type: string; name: string; available: boolean };
+        active_variant: string;
+        active_is_gpu: boolean;
+        recommended: string;
+        recommended_downloaded: boolean;
+        download_url: string;
+      }>("get_gpu_status").then(s => setGpuStatus(s)).catch(() => null);
+    });
+  }, [isTauri]);
+
+  const downloadGpuWhisper = useCallback(async () => {
+    setGpuDownloading(true);
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("download_gpu_whisper");
+      // 重新检查 GPU 状态
+      const s = await invoke<typeof gpuStatus>("get_gpu_status");
+      setGpuStatus(s);
+    } catch (e) {
+      alert(`GPU 加速版下载失败: ${e}`);
+    } finally {
+      setGpuDownloading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!initialized.current) return;
     window.localStorage.setItem("subgen-desktop-settings", JSON.stringify(settings));
@@ -520,6 +568,25 @@ export function DesktopSubtitlePanel() {
     import("@tauri-apps/api/event")
       .then(({ listen }) => listen<{ model: string; ratio: number }>("model-download-progress", e => {
         setDownloadProgress(prev => ({ ...prev, [e.payload.model]: e.payload.ratio }));
+      }))
+      .then(u => { if (disposed) u(); else off = u; })
+      .catch(() => { });
+    return () => { disposed = true; off?.(); };
+  }, [isTauri]);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    let off: (() => void) | undefined;
+    let disposed = false;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => listen<{ variant: string; ratio: number; message: string; url: string }>("gpu-download-progress", e => {
+        if (e.payload.ratio >= 1.0) {
+          setGpuDownloading(false);
+          // 刷新 GPU 状态
+          import("@tauri-apps/api/core").then(({ invoke }) =>
+            invoke<typeof gpuStatus>("get_gpu_status").then(s => setGpuStatus(s))
+          );
+        }
       }))
       .then(u => { if (disposed) u(); else off = u; })
       .catch(() => { });
@@ -1132,6 +1199,72 @@ export function DesktopSubtitlePanel() {
                     onDelete={deleteModel}
                   />
                 </SettingRow>
+              )}
+              {settings.asrProvider === "local-whisper" && gpuStatus && (
+                <>
+                <SettingRow label="GPU 加速">
+                  {gpuStatus.active_is_gpu ? (
+                    <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                      {gpuStatus.detected.name} ({gpuStatus.active_variant.toUpperCase()}) ✓ 已启用
+                    </span>
+                  ) : gpuStatus.recommended ? (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                          {gpuStatus.detected.name} 已检测到
+                        </span>
+                        <button
+                          onClick={downloadGpuWhisper}
+                          disabled={gpuDownloading}
+                          className="rounded px-2 py-0.5 text-xs font-medium"
+                          style={{
+                            background: gpuDownloading ? "var(--color-border)" : "var(--color-accent)",
+                            color: "white",
+                            opacity: gpuDownloading ? 0.6 : 1,
+                          }}
+                        >
+                          {gpuDownloading ? "下载中..." : "自动下载"}
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const { open } = await import("@tauri-apps/plugin-dialog");
+                            const path = await open({
+                              filters: [{ name: "压缩包", extensions: ["zip", "xz"] }],
+                              multiple: false,
+                            });
+                            if (path) {
+                              setGpuDownloading(true);
+                              try {
+                                const { invoke } = await import("@tauri-apps/api/core");
+                                await invoke("install_gpu_archive", { path });
+                                const s = await invoke<typeof gpuStatus>("get_gpu_status");
+                                setGpuStatus(s);
+                              } catch (e) { alert(`安装失败: ${e}`); }
+                              finally { setGpuDownloading(false); }
+                            }
+                          }}
+                          className="rounded px-2 py-0.5 text-xs"
+                          style={{
+                            border: "0.5px solid var(--color-border)",
+                            color: "var(--color-text-secondary)",
+                          }}
+                        >
+                          选择文件...
+                        </button>
+                      </div>
+                      {gpuStatus.download_url && (
+                        <div className="text-xs break-all" style={{ color: "var(--color-text-tertiary)" }}>
+                          下载地址: {gpuStatus.download_url}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+                      使用 CPU 模式
+                    </span>
+                  )}
+                </SettingRow>
+                </>
               )}
               {settings.asrProvider === "groq" && (
                 <SettingRow label="API Key">

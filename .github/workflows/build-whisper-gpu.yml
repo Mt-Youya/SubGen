@@ -1,0 +1,164 @@
+name: Build Whisper GPU binaries
+
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+
+jobs:
+  # ── Windows CUDA (NVIDIA) ──────────────────────────────
+  windows-cuda:
+    name: Windows CUDA
+    runs-on: windows-latest
+    steps:
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2
+        with:
+          cuda: "12.6"
+
+      - name: Get whisper.cpp
+        run: |
+          $version = (Invoke-RestMethod "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest").tag_name
+          git clone --depth=1 --branch "$version" https://github.com/ggml-org/whisper.cpp
+        shell: pwsh
+
+      - name: Build whisper.cpp (CUDA)
+        run: |
+          cd whisper.cpp
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DGGML_CUDA=ON `
+            -DCMAKE_CUDA_ARCHITECTURES="52;61;70;75;80;86;89" `
+            -DWHISPER_BUILD_SERVER=ON `
+            -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+          mkdir -p ../dist
+          cp build/bin/Release/whisper-server.exe ../dist/
+          cp build/bin/Release/whisper-cli.exe ../dist/
+          Get-ChildItem build/bin/Release/*.dll | Where-Object { $_.Name -match 'whisper|ggml|cublas|cudart|cuda' } | Copy-Item -Destination ../dist/
+        shell: pwsh
+
+      - name: Package
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^desktop-', ''
+          Compress-Archive -Path dist/* -DestinationPath "whisper-cuda-win64.zip"
+          echo "ASSET=whisper-cuda-win64.zip" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: whisper-cuda-win64.zip
+
+  # ── Windows Vulkan ─────────────────────────────────────
+  windows-vulkan:
+    name: Windows Vulkan
+    runs-on: windows-latest
+    steps:
+      - name: Install Vulkan SDK
+        run: |
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe" -OutFile vulkan-sdk.exe
+          Start-Process -FilePath "vulkan-sdk.exe" -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait -NoNewWindow
+        shell: pwsh
+
+      - name: Get whisper.cpp
+        run: |
+          $version = (Invoke-RestMethod "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest").tag_name
+          git clone --depth=1 --branch "$version" https://github.com/ggml-org/whisper.cpp
+        shell: pwsh
+
+      - name: Build whisper.cpp (Vulkan)
+        run: |
+          cd whisper.cpp
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DGGML_VULKAN=ON `
+            -DWHISPER_BUILD_SERVER=ON `
+            -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+          mkdir -p ../dist
+          cp build/bin/Release/whisper-server.exe ../dist/
+          cp build/bin/Release/whisper-cli.exe ../dist/
+          Get-ChildItem build/bin/Release/*.dll | Where-Object { $_.Name -match 'whisper|ggml|vulkan' } | Copy-Item -Destination ../dist/
+        shell: pwsh
+
+      - name: Package
+        run: |
+          Compress-Archive -Path dist/* -DestinationPath "whisper-vulkan-win64.zip"
+        shell: pwsh
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: whisper-vulkan-win64.zip
+
+  # ── Linux CUDA ─────────────────────────────────────────
+  linux-cuda:
+    name: Linux CUDA
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.6-devel-ubuntu22.04
+    steps:
+      - name: Install build deps
+        run: |
+          apt-get update
+          apt-get install -y git cmake build-essential curl
+
+      - name: Get whisper.cpp
+        run: |
+          version=$(curl -s https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest | jq -r .tag_name)
+          git clone --depth=1 --branch "$version" https://github.com/ggml-org/whisper.cpp
+
+      - name: Build whisper.cpp (CUDA)
+        run: |
+          cd whisper.cpp
+          cmake -B build \
+            -DGGML_CUDA=ON \
+            -DWHISPER_BUILD_SERVER=ON \
+            -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build -j$(nproc)
+          mkdir -p ../dist
+          cp build/bin/whisper-server build/bin/whisper-cli ../dist/
+          chmod +x ../dist/whisper-server ../dist/whisper-cli
+
+      - name: Package
+        run: |
+          XZ_OPT=-9 tar -cJf whisper-cuda-linux64.tar.xz dist/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: whisper-cuda-linux64.tar.xz
+
+  # ── Linux Vulkan ───────────────────────────────────────
+  linux-vulkan:
+    name: Linux Vulkan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git cmake build-essential curl libvulkan-dev glslang-tools
+
+      - name: Get whisper.cpp
+        run: |
+          version=$(curl -s https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest | jq -r .tag_name)
+          git clone --depth=1 --branch "$version" https://github.com/ggml-org/whisper.cpp
+
+      - name: Build whisper.cpp (Vulkan)
+        run: |
+          cd whisper.cpp
+          cmake -B build \
+            -DGGML_VULKAN=ON \
+            -DWHISPER_BUILD_SERVER=ON \
+            -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build -j$(nproc)
+          mkdir -p ../dist
+          cp build/bin/whisper-server build/bin/whisper-cli ../dist/
+          chmod +x ../dist/whisper-server ../dist/whisper-cli
+
+      - name: Package
+        run: |
+          XZ_OPT=-9 tar -cJf whisper-vulkan-linux64.tar.xz dist/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: whisper-vulkan-linux64.tar.xz

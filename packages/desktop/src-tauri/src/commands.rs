@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
+use crate::gpu;
+
 /// 创建不弹窗的 Command（Windows 上加 CREATE_NO_WINDOW）
 fn silent_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
     #[cfg(windows)]
@@ -179,7 +181,7 @@ fn num_cpus() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
 }
 
-fn dirs_cache() -> PathBuf {
+pub fn dirs_cache() -> PathBuf {
     let base = if cfg!(windows) {
         env::var("USERPROFILE").or_else(|_| env::var("APPDATA")).unwrap_or_else(|_| ".".into())
     } else {
@@ -201,6 +203,21 @@ fn resolve_whisper_server(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn resolve_binary(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    // GPU 下载的二进制优先（~/.subgen_cache/bin/）
+    let cache_bin = gpu::gpu_bin_dir().join(name);
+    if cache_bin.is_file() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = fs::metadata(&cache_bin) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o755);
+                fs::set_permissions(&cache_bin, perms).ok();
+            }
+        }
+        return Ok(cache_bin);
+    }
+
     if let Ok(resource_path) = app.path().resource_dir() {
         for dir in [resource_path.clone(), resource_path.join("resources")] {
             let p = dir.join(name);
@@ -400,11 +417,24 @@ pub fn check_dependencies(app: AppHandle) -> serde_json::Value {
         .iter()
         .any(|m| model_path(m).exists());
     let default_mp = default_model_path();
+
+    let gpu = gpu::detect_gpu();
+    let using_gpu = if cfg!(target_os = "macos") {
+        // macOS Metal 已内置
+        true
+    } else {
+        // Windows/Linux: 检查是否已下载 GPU 版
+        gpu.available && gpu::gpu_bin_installed(gpu.gpu_type)
+    };
+
     serde_json::json!({
         "ffmpeg": ffmpeg_ok,
         "whisper": whisper_ok,
         "model": any_model,
-        "model_path": default_mp.to_string_lossy()
+        "model_path": default_mp.to_string_lossy(),
+        "gpu_type": gpu::gpu_variant_label(gpu.gpu_type),
+        "gpu_available": gpu.available,
+        "using_gpu": using_gpu,
     })
 }
 
@@ -445,7 +475,7 @@ pub async fn download_whisper_model(
         .map_err(|e| format!("创建模型目录失败: {e}"))?;
 
     let url = format!(
-        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin"
+        "https://hf-mirror.com/ggml-org/whisper.cpp/resolve/main/ggml-{name}.bin"
     );
 
     let client = reqwest::Client::new();
@@ -484,6 +514,368 @@ pub fn delete_whisper_model(model: String) -> Result<(), String> {
     let path = model_path(&model);
     if path.exists() {
         fs::remove_file(&path).map_err(|e| format!("删除失败: {e}"))?;
+    }
+    Ok(())
+}
+
+/// 检测当前平台 GPU 类型
+#[tauri::command]
+pub fn detect_gpu() -> serde_json::Value {
+    let info = gpu::detect_gpu();
+    serde_json::to_value(info).unwrap_or(json!({"gpu_type":"cpu","name":"检测失败","available":false}))
+}
+
+/// GPU 状态：检测结果 + 安装状态 + 推荐
+#[tauri::command]
+pub fn get_gpu_status() -> serde_json::Value {
+    let detected = gpu::detect_gpu();
+    let active_var = if detected.available
+        && gpu::gpu_bin_installed(detected.gpu_type)
+    {
+        gpu::gpu_variant_label(detected.gpu_type)
+    } else if cfg!(target_os = "macos") {
+        "metal"
+    } else {
+        "cpu"
+    };
+
+    let recommended = if cfg!(target_os = "macos") || !detected.available {
+        ""
+    } else {
+        gpu::gpu_variant_label(detected.gpu_type)
+    };
+
+    let recommended_downloaded = if recommended.is_empty() {
+        false
+    } else {
+        gpu::gpu_bin_installed(detected.gpu_type)
+    };
+
+    let download_url = if !recommended.is_empty() && !recommended_downloaded {
+        gpu_release_url(recommended)
+    } else {
+        String::new()
+    };
+
+    serde_json::json!({
+        "detected": {
+            "gpu_type": gpu::gpu_variant_label(detected.gpu_type),
+            "name": detected.name,
+            "available": detected.available,
+        },
+        "active_variant": active_var,
+        "active_is_gpu": matches!(active_var, "metal" | "cuda" | "vulkan"),
+        "recommended": recommended,
+        "recommended_downloaded": recommended_downloaded,
+        "download_url": download_url,
+        "download_size_mb": 50,
+    })
+}
+
+/// whisper.cpp 版本锁定
+const WHISPER_CPP_TAG: &str = "v1.8.4";
+
+/// GitHub 下载镜像前缀（国内加速），为空则直连
+const GITHUB_MIRROR: &str = "https://ghproxy.net/";
+
+fn gpu_release_url(variant: &str) -> String {
+    let base = match variant {
+        "cuda" if cfg!(windows) => {
+            format!("https://github.com/ggml-org/whisper.cpp/releases/download/{WHISPER_CPP_TAG}/whisper-cublas-12.4.0-bin-x64.zip")
+        }
+        "vulkan" if cfg!(windows) => {
+            format!("https://github.com/ggml-org/whisper.cpp/releases/download/{WHISPER_CPP_TAG}/whisper-blas-bin-x64.zip")
+        }
+        _ => return String::new(),
+    };
+    format!("{GITHUB_MIRROR}{base}")
+}
+
+/// 下载 GPU 加速版 whisper 二进制（多线程分块下载）
+#[tauri::command]
+pub async fn download_gpu_whisper(
+    app: AppHandle,
+    variant: Option<String>,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+    use std::io::{Seek, SeekFrom, Write};
+
+    let gpu_info = gpu::detect_gpu();
+    let variant = variant.unwrap_or_else(|| {
+        gpu::gpu_variant_label(gpu_info.gpu_type).to_string()
+    });
+
+    if variant == "cpu" {
+        return Err("CPU 版本无需下载，已内置在应用中".into());
+    }
+
+    let remote = gpu_release_url(&variant);
+    if remote.is_empty() {
+        return Err(format!("{variant} 加速版暂无预编译包，请在 GitHub 提交 issue 请求支持"));
+    }
+
+    let ext = if cfg!(windows) { "zip" } else { "tar.xz" };
+    let target_dir = gpu::gpu_bin_dir();
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("创建目录失败: {e}"))?;
+    let download_path = target_dir.join(format!("whisper-{variant}.{ext}"));
+
+    let client = reqwest::Client::new();
+
+    // HEAD 请求获取文件大小
+    let head = client.head(&remote).send().await
+        .map_err(|e| format!("无法连接: {e}"))?;
+    let total = head.content_length().unwrap_or(0);
+    let accepts_ranges = head.headers()
+        .get("accept-ranges")
+        .map(|v| v.to_str().unwrap_or("") == "bytes")
+        .unwrap_or(false);
+
+    let total_mb = total as f64 / 1_048_576.0;
+    emit_gpu_progress(&app, &variant, 0.0, &format!("开始下载 {} ({:.0} MB)", variant, total_mb));
+
+    // 多线程分块下载（3 个并发）
+    let concurrency = if accepts_ranges && total > 10_000_000 { 3usize } else { 1 };
+    if concurrency > 1 {
+        let chunk_size = total / concurrency as u64;
+        let mut handles = Vec::new();
+        let download_path = download_path.clone();
+        let remote = remote.clone();
+        let variant = variant.clone();
+
+        // 预分配文件
+        let file = fs::File::create(&download_path)
+            .map_err(|e| format!("创建文件失败: {e}"))?;
+        file.set_len(total).map_err(|e| format!("预分配失败: {e}"))?;
+        drop(file);
+
+        for i in 0..concurrency {
+            let client = client.clone();
+            let remote = remote.clone();
+            let download_path = download_path.clone();
+            let start = i as u64 * chunk_size;
+            let end = if i == concurrency - 1 { total - 1 } else { (i as u64 + 1) * chunk_size - 1 };
+
+            handles.push(tokio::spawn(async move {
+                let resp = client.get(&remote)
+                    .header("Range", format!("bytes={start}-{end}"))
+                    .send().await
+                    .map_err(|e| format!("分块 {i} 请求失败: {e}"))?;
+
+                if !resp.status().is_success() && resp.status().as_u16() != 206 {
+                    return Err(format!("分块 {i} HTTP {}", resp.status()));
+                }
+
+                let mut stream = resp.bytes_stream();
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&download_path)
+                    .map_err(|e| format!("打开文件失败: {e}"))?;
+                file.seek(SeekFrom::Start(start))
+                    .map_err(|e| format!("seek 失败: {e}"))?;
+
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|e| format!("分块 {i} 读取失败: {e}"))?;
+                    file.write_all(&chunk).map_err(|e| format!("分块 {i} 写入失败: {e}"))?;
+                }
+                Ok::<_, String>(i)
+            }));
+        }
+
+        // 等待所有分块完成，期间汇报进度
+        let mut completed = 0usize;
+        for h in handles {
+            h.await.map_err(|e| format!("分块任务崩溃: {e}"))??;
+            completed += 1;
+            emit_gpu_progress(&app, &variant,
+                (concurrency - 1) as f64 / concurrency as f64 + completed as f64 / concurrency as f64 * 0.2,
+                &format!("下载中 {completed}/{concurrency}"));
+        }
+    } else {
+        // 单线程流式下载
+        let resp = client.get(&remote).send().await
+            .map_err(|e| format!("请求失败: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("下载失败: HTTP {}", resp.status()));
+        }
+
+        let mut file = fs::File::create(&download_path)
+            .map_err(|e| format!("创建文件失败: {e}"))?;
+        let mut downloaded: u64 = 0;
+        let mut stream = resp.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("下载中断: {e}"))?;
+            file.write_all(&chunk).map_err(|e| format!("写入失败: {e}"))?;
+            downloaded += chunk.len() as u64;
+            let ratio = if total > 0 { downloaded as f64 / total as f64 } else { 0.0 };
+            emit_gpu_progress(&app, &variant, ratio * 0.95, &format!("下载中 {:.0}%", ratio * 100.0));
+        }
+        drop(file);
+    }
+
+    // 解压
+    emit_gpu_progress(&app, &variant, 0.96, "正在解压...");
+    let target_dir_for_block = target_dir.clone();
+    let download_path_block = download_path.clone();
+    tokio::task::spawn_blocking(move || {
+        extract_archive(&download_path_block, &target_dir_for_block)?;
+        flatten_dir(&target_dir_for_block);
+        fs::remove_file(&download_path_block).ok();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for entry in fs::read_dir(&target_dir_for_block).map_err(|e| format!("读取目录失败: {e}"))? {
+                let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
+                let path = entry.path();
+                if path.is_file() {
+                    let mut perms = fs::metadata(&path)
+                        .map_err(|e| format!("获取权限失败: {e}"))?
+                        .permissions();
+                    perms.set_mode(0o755);
+                    fs::set_permissions(&path, perms).ok();
+                }
+            }
+        }
+        Ok::<_, String>(())
+    }).await.map_err(|e| format!("解压任务异常: {e}"))??;
+
+    emit_gpu_progress(&app, &variant, 1.0, "下载完成");
+    Ok(target_dir.to_string_lossy().to_string())
+}
+
+/// 手动安装 GPU 加速包（用户自行下载后拖拽/选择 zip）
+#[tauri::command]
+pub fn install_gpu_archive(app: AppHandle, path: String) -> Result<String, String> {
+    let src = Path::new(&path);
+    if !src.is_file() {
+        return Err(format!("文件不存在: {path}"));
+    }
+    let ext = src.extension().and_then(|s| s.to_str()).unwrap_or("");
+    if ext != "zip" && ext != "xz" {
+        return Err(format!("不支持的文件格式: .{ext}，请选择 .zip 或 .tar.xz 文件"));
+    }
+
+    let target_dir = gpu::gpu_bin_dir();
+    fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("创建目录失败: {e}"))?;
+
+    extract_archive(src, &target_dir)?;
+    flatten_dir(&target_dir);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for entry in fs::read_dir(&target_dir).map_err(|e| format!("读取目录失败: {e}"))? {
+            let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
+            let path = entry.path();
+            if path.is_file() {
+                let mut perms = fs::metadata(&path).map_err(|e| format!("获取权限失败: {e}"))?.permissions();
+                perms.set_mode(0o755);
+                fs::set_permissions(&path, perms).ok();
+            }
+        }
+    }
+
+    app.emit("gpu-download-progress", serde_json::json!({
+        "variant": "manual",
+        "ratio": 1.0,
+        "message": "手动安装完成",
+    })).ok();
+
+    Ok(target_dir.to_string_lossy().to_string())
+}
+
+fn emit_gpu_progress(app: &AppHandle, variant: &str, ratio: f64, message: &str) {
+    let url = gpu_release_url(variant);
+    app.emit("gpu-download-progress", serde_json::json!({
+        "variant": variant,
+        "ratio": ratio,
+        "message": message,
+        "url": url,
+    })).ok();
+}
+
+/// 解压后将子目录中的文件移到目标根目录（处理 zip 包内有根目录的情况）
+fn flatten_dir(dir: &Path) {
+    let mut files: Vec<PathBuf> = Vec::new();
+    collect_files(dir, &mut files);
+    for src in &files {
+        if let Some(name) = src.file_name() {
+            let dest = dir.join(name);
+            if !dest.exists() {
+                fs::rename(src, &dest).ok();
+            }
+        }
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                fs::remove_dir_all(&path).ok();
+            }
+        }
+    }
+}
+
+fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                files.push(path);
+            } else if path.is_dir() {
+                collect_files(&path, files);
+            }
+        }
+    }
+}
+
+/// 解压 zip 或 tar.xz
+fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
+    let ext = archive.extension().and_then(|s| s.to_str()).unwrap_or("");
+    match ext {
+        "zip" => {
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let status = std::process::Command::new("powershell")
+                    .args([
+                        "-Command",
+                        &format!(
+                            "Expand-Archive -Path \"{}\" -DestinationPath \"{}\" -Force",
+                            archive.display(), dest.display()
+                        ),
+                    ])
+                    .creation_flags(0x08000000)
+                    .status()
+                    .map_err(|e| format!("解压 zip 失败: {e}"))?;
+                if !status.success() {
+                    return Err("解压 zip 失败".into());
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let status = silent_command("unzip")
+                    .args(["-o", &archive.to_string_lossy(), "-d", &dest.to_string_lossy()])
+                    .status()
+                    .map_err(|e| format!("解压 zip 失败: {e}"))?;
+                if !status.success() {
+                    return Err("解压 zip 失败".into());
+                }
+            }
+        }
+        "xz" | _ => {
+            // tar.xz
+            let status = silent_command("tar")
+                .args(["-xf", &archive.to_string_lossy(), "-C", &dest.to_string_lossy()])
+                .status()
+                .map_err(|e| format!("解压 tar.xz 失败: {e}"))?;
+            if !status.success() {
+                return Err("解压失败".into());
+            }
+        }
     }
     Ok(())
 }
@@ -1485,7 +1877,7 @@ pub async fn generate_subtitles(
                     }
                     let n_ready = ready.iter().filter(|&&r| r).count();
                     if n_ready == n_instances {
-                        emit_progress(&app, "loading_model", 0.38, "模型就绪，开始转录...");
+                        emit_progress(&app, "loading_model", 0.38, "模型就绪，正在转录第一个片段...");
                         break;
                     }
                     let elapsed = start.elapsed().as_secs();
