@@ -25,6 +25,7 @@ pub fn run() {
             commands::get_concurrency,
             commands::download_gpu_whisper,
             commands::install_gpu_archive,
+            commands::clear_gpu_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

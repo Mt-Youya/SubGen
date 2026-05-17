@@ -776,24 +776,54 @@ pub async fn download_gpu_whisper(
     Ok(target_dir.to_string_lossy().to_string())
 }
 
-/// 手动安装 GPU 加速包（用户自行下载后拖拽/选择 zip）
+/// 手动安装 GPU 加速包：支持直接选择 exe/bin/dll 文件（复制到 bin 目录）或 zip/xz 压缩包（解压）
 #[tauri::command]
 pub fn install_gpu_archive(app: AppHandle, path: String) -> Result<String, String> {
+    eprintln!("[install_gpu_archive] 收到文件路径: {path}");
     let src = Path::new(&path);
     if !src.is_file() {
+        eprintln!("[install_gpu_archive] 文件不存在: {path}");
         return Err(format!("文件不存在: {path}"));
     }
-    let ext = src.extension().and_then(|s| s.to_str()).unwrap_or("");
-    if ext != "zip" && ext != "xz" {
-        return Err(format!("不支持的文件格式: .{ext}，请选择 .zip 或 .tar.xz 文件"));
-    }
+    eprintln!("[install_gpu_archive] 文件存在, 大小: {:?}", src.metadata().ok().map(|m| m.len()));
 
     let target_dir = gpu::gpu_bin_dir();
+    eprintln!("[install_gpu_archive] 目标目录: {:?}", target_dir);
     fs::create_dir_all(&target_dir)
         .map_err(|e| format!("创建目录失败: {e}"))?;
+    eprintln!("[install_gpu_archive] 目标目录已就绪");
 
-    extract_archive(src, &target_dir)?;
-    flatten_dir(&target_dir);
+    let ext = src.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    eprintln!("[install_gpu_archive] 文件扩展名(小写): '{ext}'");
+
+    match ext.as_str() {
+        "zip" | "xz" => {
+            eprintln!("[install_gpu_archive] 走解压路径, 调用 extract_archive");
+            extract_archive(src, &target_dir)?;
+            eprintln!("[install_gpu_archive] 解压完成, 目录内容:");
+            if let Ok(entries) = fs::read_dir(&target_dir) {
+                for e in entries.flatten() {
+                    eprintln!("  {:?} (is_file={})", e.path(), e.path().is_file());
+                }
+            }
+            eprintln!("[install_gpu_archive] 调用 flatten_dir");
+            flatten_dir(&target_dir);
+            eprintln!("[install_gpu_archive] flatten 后目录内容:");
+            if let Ok(entries) = fs::read_dir(&target_dir) {
+                for e in entries.flatten() {
+                    eprintln!("  {:?} (is_file={})", e.path(), e.path().is_file());
+                }
+            }
+        }
+        _ => {
+            eprintln!("[install_gpu_archive] 走复制路径");
+            let name = src.file_name().unwrap_or_default();
+            let dest = target_dir.join(name);
+            eprintln!("[install_gpu_archive] 复制 {:?} -> {:?}", src, dest);
+            fs::copy(src, &dest).map_err(|e| format!("复制文件失败: {e}"))?;
+            eprintln!("[install_gpu_archive] 复制完成");
+        }
+    }
 
     #[cfg(unix)]
     {
@@ -809,13 +839,35 @@ pub fn install_gpu_archive(app: AppHandle, path: String) -> Result<String, Strin
         }
     }
 
+    let installed = fs::read_dir(&target_dir)
+        .ok()
+        .map(|d| d.flatten().filter(|e| e.path().is_file()).count())
+        .unwrap_or(0);
+    eprintln!("[install_gpu_archive] 最终文件数: {installed}");
+
+    if installed == 0 {
+        return Err("解压/复制后未找到任何文件，请确认压缩包内容".into());
+    }
+
     app.emit("gpu-download-progress", serde_json::json!({
         "variant": "manual",
         "ratio": 1.0,
-        "message": "手动安装完成",
+        "message": format!("已安装 {installed} 个文件"),
     })).ok();
 
     Ok(target_dir.to_string_lossy().to_string())
+}
+
+/// 清除 GPU 加速二进制缓存（删除 ~/.subgen_cache/bin/ 目录）
+#[tauri::command]
+pub fn clear_gpu_cache() -> Result<String, String> {
+    let dir = gpu::gpu_bin_dir();
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| format!("删除失败: {e}"))?;
+        Ok("GPU 加速缓存已清除".into())
+    } else {
+        Ok("没有可清除的 GPU 缓存".into())
+    }
 }
 
 fn emit_gpu_progress(app: &AppHandle, variant: &str, ratio: f64, message: &str) {
@@ -830,13 +882,19 @@ fn emit_gpu_progress(app: &AppHandle, variant: &str, ratio: f64, message: &str) 
 
 /// 解压后将子目录中的文件移到目标根目录（处理 zip 包内有根目录的情况）
 fn flatten_dir(dir: &Path) {
+    eprintln!("[flatten_dir] 开始处理: {:?}", dir);
     let mut files: Vec<PathBuf> = Vec::new();
     collect_files(dir, &mut files);
+    eprintln!("[flatten_dir] 收集到 {} 个文件", files.len());
     for src in &files {
         if let Some(name) = src.file_name() {
             let dest = dir.join(name);
+            eprintln!("[flatten_dir] 移动 {:?} -> {:?} (dest_exists={})", src, dest, dest.exists());
             if !dest.exists() {
-                fs::rename(src, &dest).ok();
+                match fs::rename(src, &dest) {
+                    Ok(()) => eprintln!("[flatten_dir] 移动成功"),
+                    Err(e) => eprintln!("[flatten_dir] 移动失败: {e}"),
+                }
             }
         }
     }
@@ -844,10 +902,12 @@ fn flatten_dir(dir: &Path) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
+                eprintln!("[flatten_dir] 删除子目录: {:?}", path);
                 fs::remove_dir_all(&path).ok();
             }
         }
     }
+    eprintln!("[flatten_dir] 完成");
 }
 
 fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -865,46 +925,72 @@ fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) {
 
 /// 解压 zip 或 tar.xz
 fn extract_archive(archive: &Path, dest: &Path) -> Result<(), String> {
-    let ext = archive.extension().and_then(|s| s.to_str()).unwrap_or("");
-    match ext {
+    let ext = archive.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    eprintln!("[extract_archive] 解压 {:?} -> {:?}, ext='{ext}'", archive, dest);
+    match ext.as_str() {
         "zip" => {
+            eprintln!("[extract_archive] 匹配 zip 分支");
             #[cfg(windows)]
             {
                 use std::os::windows::process::CommandExt;
-                let status = std::process::Command::new("powershell")
-                    .args([
-                        "-Command",
-                        &format!(
-                            "Expand-Archive -Path \"{}\" -DestinationPath \"{}\" -Force",
-                            archive.display(), dest.display()
-                        ),
-                    ])
+                use std::process::Stdio;
+                let ps_cmd = format!(
+                    "Expand-Archive -Path \"{}\" -DestinationPath \"{}\" -Force",
+                    archive.display(), dest.display()
+                );
+                eprintln!("[extract_archive] PS 命令: {ps_cmd}");
+                let output = std::process::Command::new("powershell")
+                    .args(["-Command", &ps_cmd])
                     .creation_flags(0x08000000)
-                    .status()
-                    .map_err(|e| format!("解压 zip 失败: {e}"))?;
-                if !status.success() {
-                    return Err("解压 zip 失败".into());
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .output()
+                    .map_err(|e| format!("启动 PowerShell 失败: {e}"))?;
+                eprintln!("[extract_archive] PS exit: {}", output.status.code().unwrap_or(-1));
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("[extract_archive] PS 失败, stderr: {stderr}");
+                    eprintln!("[extract_archive] 尝试 tar 兜底");
+                    let tar = silent_command("tar")
+                        .args(["-xf", &archive.to_string_lossy(), "-C", &dest.to_string_lossy()])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped())
+                        .output()
+                        .map_err(|e| format!("tar 兜底解压失败: {e}"))?;
+                    eprintln!("[extract_archive] tar exit: {}", tar.status.code().unwrap_or(-1));
+                    if !tar.status.success() {
+                        let tar_err = String::from_utf8_lossy(&tar.stderr);
+                        eprintln!("[extract_archive] tar 也失败: {tar_err}");
+                        return Err(format!("解压 zip 失败\nPowerShell: {stderr}\ntar: {tar_err}"));
+                    }
+                    eprintln!("[extract_archive] tar 兜底成功");
+                } else {
+                    eprintln!("[extract_archive] PS 解压成功");
                 }
             }
             #[cfg(not(windows))]
             {
-                let status = silent_command("unzip")
+                let output = silent_command("unzip")
                     .args(["-o", &archive.to_string_lossy(), "-d", &dest.to_string_lossy()])
-                    .status()
+                    .output()
                     .map_err(|e| format!("解压 zip 失败: {e}"))?;
-                if !status.success() {
-                    return Err("解压 zip 失败".into());
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(format!("解压 zip 失败: {stderr}"));
                 }
             }
         }
         "xz" | _ => {
-            // tar.xz
-            let status = silent_command("tar")
+            use std::process::Stdio;
+            let output = silent_command("tar")
                 .args(["-xf", &archive.to_string_lossy(), "-C", &dest.to_string_lossy()])
-                .status()
-                .map_err(|e| format!("解压 tar.xz 失败: {e}"))?;
-            if !status.success() {
-                return Err("解压失败".into());
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|e| format!("启动 tar 失败: {e}"))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("解压失败: {stderr}"));
             }
         }
     }

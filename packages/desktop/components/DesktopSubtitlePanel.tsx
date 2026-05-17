@@ -1266,9 +1266,28 @@ export function DesktopSubtitlePanel() {
                 <>
                 <SettingRow label="GPU 加速">
                   {gpuStatus.active_is_gpu ? (
-                    <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                      {gpuStatus.detected.name} ({gpuStatus.active_variant.toUpperCase()}) ✓ 已启用
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                        {gpuStatus.detected.name} ({gpuStatus.active_variant.toUpperCase()}) ✓ 已启用
+                      </span>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { invoke } = await import("@tauri-apps/api/core");
+                            await invoke("clear_gpu_cache");
+                            const s = await invoke<typeof gpuStatus>("get_gpu_status");
+                            setGpuStatus(s);
+                          } catch (e) { alert(`清除失败: ${e}`); }
+                        }}
+                        className="rounded px-2 py-0.5 text-xs"
+                        style={{
+                          border: "0.5px solid var(--color-border)",
+                          color: "var(--color-text-tertiary)",
+                        }}
+                      >
+                        清除
+                      </button>
+                    </div>
                   ) : gpuStatus.recommended ? (
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center gap-2">
@@ -1291,7 +1310,7 @@ export function DesktopSubtitlePanel() {
                           onClick={async () => {
                             const { open } = await import("@tauri-apps/plugin-dialog");
                             const path = await open({
-                              filters: [{ name: "压缩包", extensions: ["zip", "xz"] }],
+                              filters: [{ name: "GPU 加速文件", extensions: ["zip", "xz", "exe", "dll", "bin"] }],
                               multiple: false,
                             });
                             if (path) {
