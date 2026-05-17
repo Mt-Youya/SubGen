@@ -355,8 +355,14 @@ export function ExtractPanel() {
       {(status === "extracting" || status === "done" || status === "error") && inputs.length > 0 && (
         <div className="rounded-md overflow-hidden"
           style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}>
-          <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
-            <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>提取队列</span>
+          <div className="px-4 py-2.5 flex items-center justify-between" style={{ borderBottom: "0.5px solid var(--color-border-subtle)" }}>
+            <div className="flex items-center gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                style={{ color: "var(--color-accent)", flexShrink: 0 }}>
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>提取队列</span>
+            </div>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-medium"
               style={{ background: "var(--color-accent-muted)", color: "var(--color-accent)", border: "0.5px solid rgba(99,102,241,0.25)" }}>
               {inputs.length} 个文件
