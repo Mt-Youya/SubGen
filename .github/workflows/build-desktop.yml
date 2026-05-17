@@ -66,54 +66,30 @@ jobs:
             patchelf \
             ffmpeg
 
-      - name: Install macOS whisper-cpp (Metal) + ffmpeg
+      - name: Install macOS whisper-cpp (Homebrew) + ffmpeg
         if: matrix.platform == 'macos'
         run: |
           mkdir -p packages/desktop/src-tauri/resources
 
-          # ── 从源码编译 whisper.cpp（Metal 加速）──
-          brew install cmake pkg-config
-          WHISPER_TAG=$(curl -s https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest | jq -r .tag_name)
-          echo "Using whisper.cpp tag: $WHISPER_TAG"
-          git clone --depth=1 --branch "$WHISPER_TAG" https://github.com/ggml-org/whisper.cpp
-          cd whisper.cpp
-          cmake -B build \
-            -DGGML_METAL=ON \
-            -DGGML_METAL_EMBED_LIBRARY=ON \
-            -DWHISPER_BUILD_SERVER=ON \
-            -DWHISPER_BUILD_TESTS=OFF
-          cmake --build build --target whisper-server whisper-cli -j$(sysctl -n hw.logicalcpu)
-          cd ..
+          # ── whisper-cpp + ggml via Homebrew ──
+          brew install whisper-cpp ffmpeg
 
-          # 复制二进制
-          cp whisper.cpp/build/bin/whisper-server packages/desktop/src-tauri/resources/
-          cp whisper.cpp/build/bin/whisper-cli packages/desktop/src-tauri/resources/
+          WHISPER_CELLAR=$(brew --cellar whisper-cpp)/$(brew list --versions whisper-cpp | awk '{print $2}')
+          GGML_OPT=$(brew --prefix ggml)/lib
 
-          # 复制 dylib（从 build 目录找，兼容版本号变化）
-          cp "$(find whisper.cpp/build -name 'libwhisper.*.dylib' -type f | head -1)" \
-             packages/desktop/src-tauri/resources/libwhisper.1.dylib
-          cp "$(find whisper.cpp/build -name 'libggml.0.*.dylib' -type f | head -1)" \
+          cp "$WHISPER_CELLAR/bin/whisper-server" packages/desktop/src-tauri/resources/
+          cp "$WHISPER_CELLAR/bin/whisper-cli"    packages/desktop/src-tauri/resources/
+          cp "$WHISPER_CELLAR/lib/libwhisper.1.dylib" packages/desktop/src-tauri/resources/
+          cp "$(find "$GGML_OPT" -name 'libggml.0.*.dylib' | head -1)" \
              packages/desktop/src-tauri/resources/libggml.0.dylib
-          cp "$(find whisper.cpp/build -name 'libggml-base.0.*.dylib' -type f | head -1)" \
+          cp "$(find "$GGML_OPT" -name 'libggml-base.0.*.dylib' | head -1)" \
              packages/desktop/src-tauri/resources/libggml-base.0.dylib
-          cp "$(find whisper.cpp/build -name 'libggml-metal.0.*.dylib' -type f | head -1)" \
-             packages/desktop/src-tauri/resources/libggml-metal.0.dylib
 
-          # 复制 Metal shader
-          cp "$(find whisper.cpp/build -name 'ggml-metal.metal' -type f | head -1)" \
-             packages/desktop/src-tauri/resources/
-
-          # ── ffmpeg ──
-          curl -L "https://evermeet.cx/ffmpeg/get/ffmpeg/zip" -o ffmpeg-mac.zip
-          unzip -o ffmpeg-mac.zip -d ffmpeg-mac
-          cp ffmpeg-mac/ffmpeg packages/desktop/src-tauri/resources/ffmpeg
-          rm -rf ffmpeg-mac ffmpeg-mac.zip
-          chmod +x packages/desktop/src-tauri/resources/ffmpeg
-          codesign --force --sign - packages/desktop/src-tauri/resources/ffmpeg || true
+          cp "$(brew --prefix ffmpeg)/bin/ffmpeg" packages/desktop/src-tauri/resources/ffmpeg
 
           # ── 修改 rpath 为 @loader_path ──
           for bin in whisper-cli whisper-server; do
-            for lib in libwhisper.1 libggml.0 libggml-base.0 libggml-metal.0; do
+            for lib in libwhisper.1 libggml.0 libggml-base.0; do
               dylib="${lib}.dylib"
               old_path=$(otool -L packages/desktop/src-tauri/resources/$bin | grep "$dylib" | awk '{print $1}' | head -1)
               if [ -n "$old_path" ]; then
@@ -124,19 +100,14 @@ jobs:
             codesign --force --sign - packages/desktop/src-tauri/resources/$bin
           done
 
-          # 修复 dylib 之间的 @rpath 依赖
+          # 修复 libggml.0.dylib 内部依赖
           install_name_tool -change "$(otool -L packages/desktop/src-tauri/resources/libggml.0.dylib | grep 'libggml-base' | awk '{print $1}' | head -1)" \
             "@loader_path/libggml-base.0.dylib" packages/desktop/src-tauri/resources/libggml.0.dylib 2>/dev/null || true
-          install_name_tool -change "$(otool -L packages/desktop/src-tauri/resources/libggml-metal.0.dylib | grep 'libggml.0' | awk '{print $1}' | head -1)" \
-            "@loader_path/libggml.0.dylib" packages/desktop/src-tauri/resources/libggml-metal.0.dylib 2>/dev/null || true
-          install_name_tool -change "$(otool -L packages/desktop/src-tauri/resources/libggml-metal.0.dylib | grep 'libggml-base' | awk '{print $1}' | head -1)" \
-            "@loader_path/libggml-base.0.dylib" packages/desktop/src-tauri/resources/libggml-metal.0.dylib 2>/dev/null || true
 
           # ── 签名所有二进制 ──
           codesign --force --sign - packages/desktop/src-tauri/resources/libwhisper.1.dylib
           codesign --force --sign - packages/desktop/src-tauri/resources/libggml.0.dylib
           codesign --force --sign - packages/desktop/src-tauri/resources/libggml-base.0.dylib
-          codesign --force --sign - packages/desktop/src-tauri/resources/libggml-metal.0.dylib
           codesign --force --sign - packages/desktop/src-tauri/resources/ffmpeg
 
       - name: Install Windows whisper-cpp + ffmpeg

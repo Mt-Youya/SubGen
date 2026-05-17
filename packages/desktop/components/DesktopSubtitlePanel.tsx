@@ -109,7 +109,7 @@ function SubtitlePreview({ result, sourceLang, targetLang }: {
 type AsrProvider = "groq" | "siliconflow" | "local-whisper";
 type TranslateProvider = "deepl" | "tencent";
 
-interface ProgressPayload { stage: string; ratio: number; message: string; elapsed_secs?: number }
+interface ProgressPayload { stage: string; ratio: number; message: string; elapsed_secs?: number; stage_elapsed_secs?: number }
 
 const PIPELINE_STEPS = [
   { key: "extracting",    label: "提取音频", icon: "⚙" },
@@ -411,6 +411,7 @@ interface FileTask {
   result: GenerateResult | null;
   error: string;
   totalElapsed?: number;
+  stageTiming: Record<string, number>; // stage -> elapsed_secs
 }
 
 const MEDIA_EXTS = ["mp4", "mkv", "ts", "m2ts", "webm", "avi", "mov", "wmv", "flv", "mp3", "wav", "m4a", "aac"];
@@ -447,6 +448,9 @@ export function DesktopSubtitlePanel() {
     download_url: string;
   } | null>(null);
   const [gpuDownloading, setGpuDownloading] = useState(false);
+  const [concurrency, setConcurrency] = useState(1);
+  const [queueStartTime, setQueueStartTime] = useState<number | null>(null);
+  const [queueElapsed, setQueueElapsed] = useState<number | null>(null);
   const initialized = useRef(false);
 
   const whisperModelRef = useRef(settings.whisperModel);
@@ -511,7 +515,7 @@ export function DesktopSubtitlePanel() {
   useEffect(() => { if (isTauri) checkModel(); }, [isTauri, checkModel]);
   useEffect(() => { if (isTauri) checkModel(); }, [settings.whisperModel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 获取 GPU 状态
+  // 获取 GPU 状态 + 并发数
   useEffect(() => {
     if (!isTauri) return;
     import("@tauri-apps/api/core").then(({ invoke }) => {
@@ -523,6 +527,9 @@ export function DesktopSubtitlePanel() {
         recommended_downloaded: boolean;
         download_url: string;
       }>("get_gpu_status").then(s => setGpuStatus(s)).catch(() => null);
+      invoke<{ concurrency: number; gpu: boolean; vram_mb: number | null; gpu_name: string }>(
+        "get_concurrency"
+      ).then(r => setConcurrency(r.concurrency)).catch(() => null);
     });
   }, [isTauri]);
 
@@ -551,10 +558,16 @@ export function DesktopSubtitlePanel() {
     let off: (() => void) | undefined;
     let disposed = false;
     import("@tauri-apps/api/event")
-      .then(({ listen }) => listen<ProgressPayload>("subtitle-progress", e => {
-        const path = currentTaskRef.current;
+      .then(({ listen }) => listen<ProgressPayload & { input: string }>("subtitle-progress", e => {
+        const path = e.payload.input;
         targetRatioRef.current[path] = e.payload.ratio;
-        setTasks(prev => prev.map(t => t.path === path ? { ...t, progress: e.payload } : t));
+        setTasks(prev => prev.map(t => {
+          if (t.path !== path) return t;
+          const stageTiming = e.payload.stage_elapsed_secs != null
+            ? { ...t.stageTiming, [e.payload.stage]: e.payload.stage_elapsed_secs }
+            : t.stageTiming;
+          return { ...t, progress: e.payload, stageTiming };
+        }));
       }))
       .then(u => { if (disposed) u(); else off = u; })
       .catch(() => { });
@@ -615,17 +628,14 @@ export function DesktopSubtitlePanel() {
     if (newPaths.length === 0) return;
     const { invoke } = await import("@tauri-apps/api/core");
     const sizes = await invoke<number[]>("get_file_sizes", { paths: newPaths }).catch(() => newPaths.map(() => 0));
-    setTasks(prev => {
-      const existing = new Set(prev.map(t => t.path));
-      const toAdd = newPaths
-        .filter(p => !existing.has(p))
-        .map((p, i) => ({
-          path: p, size: sizes[i] ?? 0, status: "pending" as const,
-          progress: { stage: "", ratio: 0, message: "" },
-          displayRatio: 0, result: null, error: "",
-        }));
-      return [...prev, ...toAdd];
-    });
+    const newTasks = newPaths.map((p, i) => ({
+      path: p, size: sizes[i] ?? 0, status: "pending" as const,
+      progress: { stage: "", ratio: 0, message: "" },
+      displayRatio: 0, result: null, error: "", stageTiming: {},
+    }));
+    setTasks(newTasks);
+    setQueueElapsed(null);
+    setQueueStartTime(null);
   }, []);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
@@ -701,23 +711,29 @@ export function DesktopSubtitlePanel() {
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
     setIsRunning(true);
+    setQueueElapsed(null);
+    const queueStart = Date.now();
+    setQueueStartTime(queueStart);
     const abort = new AbortController();
     abortRef.current = abort;
     const { invoke } = await import("@tauri-apps/api/core");
-    for (const task of tasks) {
-      if (task.status === "done") continue;
+
+    const pending = tasks.filter(t => t.status !== "done");
+    // 并发池：同时最多 concurrency 个任务
+    const sem = { count: 0, max: concurrency };
+    const runTask = async (task: FileTask) => {
       if (abort.signal.aborted) {
         setTasks(prev => prev.map(t =>
-          t.status === "pending" ? { ...t, status: "error", error: "已停止" } : t
+          t.path === task.path ? { ...t, status: "error", error: "已停止" } : t
         ));
-        break;
+        return;
       }
       currentTaskRef.current = task.path;
       targetRatioRef.current[task.path] = 0;
-      setTasks(prev => prev.map(t => t.path === task.path ? { ...t, displayRatio: 0 } : t));
       const taskStart = Date.now();
       setTasks(prev => prev.map(t =>
-        t.path === task.path ? { ...t, status: "processing", progress: { stage: "starting", ratio: 0, message: "启动中..." } } : t
+        t.path === task.path ? { ...t, displayRatio: 0, status: "processing", stageTiming: {},
+          progress: { stage: "starting", ratio: 0, message: "启动中..." } } : t
       ));
       try {
         const raw = await invoke<Record<string, unknown>>("generate_subtitles", {
@@ -736,7 +752,7 @@ export function DesktopSubtitlePanel() {
             whisper_model: settings.whisperModel,
           },
         });
-        if (abort.signal.aborted) break;
+        if (abort.signal.aborted) return;
         const totalElapsed = (Date.now() - taskStart) / 1000;
         targetRatioRef.current[task.path] = 1;
         await new Promise(r => setTimeout(r, 400));
@@ -745,16 +761,39 @@ export function DesktopSubtitlePanel() {
         ));
         setExpandedTasks(prev => new Set([...prev, task.path]));
       } catch (e) {
-        if (abort.signal.aborted) break;
+        if (abort.signal.aborted) return;
         setTasks(prev => prev.map(t =>
           t.path === task.path ? { ...t, status: "error", error: String(e) } : t
         ));
       }
-    }
+    };
+
+    // 并发调度
+    await new Promise<void>(resolve => {
+      let started = 0, finished = 0;
+      function next() {
+        while (sem.count < sem.max && started < pending.length) {
+          const task = pending[started++];
+          sem.count++;
+          runTask(task).finally(() => {
+            sem.count--;
+            finished++;
+            if (finished === pending.length) resolve();
+            else next();
+          });
+        }
+      }
+      next();
+      if (pending.length === 0) resolve();
+    });
+
+    const totalQueueElapsed = (Date.now() - queueStart) / 1000;
+    setQueueElapsed(totalQueueElapsed);
+    setQueueStartTime(null);
     abortRef.current = null;
     setIsRunning(false);
     currentTaskRef.current = "";
-  }, [canSubmit, tasks, outputDir, sourceLang, targetLang, bilingual, settings]);
+  }, [canSubmit, tasks, concurrency, outputDir, sourceLang, targetLang, bilingual, settings]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
@@ -945,6 +984,11 @@ export function DesktopSubtitlePanel() {
               <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>处理队列</span>
             </div>
             <div className="flex items-center gap-2">
+              {queueElapsed != null && (
+                <span className="text-xs tabular-nums" style={{ color: "var(--color-text-tertiary)" }}>
+                  总用时 {queueElapsed.toFixed(1)}s
+                </span>
+              )}
               <span className="px-2.5 py-0.5 rounded-full text-xs font-medium"
                 style={{ background: "var(--color-accent-muted)", color: "var(--color-accent)", border: "0.5px solid rgba(99,102,241,0.25)" }}>
                 {tasks.length} 个文件
@@ -1049,24 +1093,32 @@ export function DesktopSubtitlePanel() {
                           {PIPELINE_STEPS.map((s, i) => {
                             const isDone = i < activeStepIdx;
                             const isActive = i === activeStepIdx;
+                            const stepElapsed = task.stageTiming[s.key];
                             return (
                               <div key={s.key} className="flex items-center flex-1 last:flex-none">
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300"
-                                    style={{
-                                      background: isDone || isActive ? "var(--color-accent)" : "var(--color-surface-3)",
-                                      color: isDone || isActive ? "white" : "var(--color-text-tertiary)",
-                                      boxShadow: isActive ? "0 0 8px var(--color-accent-glow, var(--color-accent))" : "none",
-                                    }}>
-                                    {isDone ? "✓" : s.icon}
+                                <div className="flex flex-col items-center gap-0.5 shrink-0">
+                                  <div className="flex items-center gap-1">
+                                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300"
+                                      style={{
+                                        background: isDone || isActive ? "var(--color-accent)" : "var(--color-surface-3)",
+                                        color: isDone || isActive ? "white" : "var(--color-text-tertiary)",
+                                        boxShadow: isActive ? "0 0 8px var(--color-accent-glow, var(--color-accent))" : "none",
+                                      }}>
+                                      {isDone ? "✓" : s.icon}
+                                    </div>
+                                    <span className="text-[11px]"
+                                      style={{ color: isDone || isActive ? "var(--color-text-primary)" : "var(--color-text-tertiary)" }}>
+                                      {s.label}
+                                    </span>
                                   </div>
-                                  <span className="text-[11px]"
-                                    style={{ color: isDone || isActive ? "var(--color-text-primary)" : "var(--color-text-tertiary)" }}>
-                                    {s.label}
-                                  </span>
+                                  {stepElapsed != null && (
+                                    <span className="text-[10px] tabular-nums" style={{ color: "var(--color-accent)" }}>
+                                      {stepElapsed.toFixed(1)}s
+                                    </span>
+                                  )}
                                 </div>
                                 {i < PIPELINE_STEPS.length - 1 && (
-                                  <div className="flex-1 h-px mx-1 rounded-full transition-all duration-500"
+                                  <div className="flex-1 h-px mx-1 rounded-full transition-all duration-500 self-start mt-2.5"
                                     style={{ background: isDone ? "var(--color-accent)" : "var(--color-border-subtle)" }} />
                                 )}
                               </div>
@@ -1122,7 +1174,17 @@ export function DesktopSubtitlePanel() {
                   {/* 完成结果（展开） */}
                   {task.status === "done" && task.result && isExpanded && (
                     <div className="px-4 pb-3 space-y-2" style={{ borderTop: "1px solid var(--color-border-subtle)" }}>
-                      <div className="flex gap-1.5 pt-2 p-1 rounded-md">
+                      {/* 阶段耗时 */}
+                      {Object.keys(task.stageTiming).length > 0 && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-2">
+                          {PIPELINE_STEPS.filter(s => task.stageTiming[s.key] != null).map(s => (
+                            <span key={s.key} className="text-[11px] tabular-nums" style={{ color: "var(--color-text-tertiary)" }}>
+                              {s.label} <span style={{ color: "var(--color-accent)" }}>{task.stageTiming[s.key]!.toFixed(1)}s</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-1.5 p-1 rounded-md">
                         {[
                           { title: "原文", subtitle: sourceLang.toUpperCase(), onClick: async () => {
                             if (!isTauri || !task.result) return;

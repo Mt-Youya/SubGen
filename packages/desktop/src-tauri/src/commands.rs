@@ -89,10 +89,12 @@ pub struct GenerateResult {
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ProgressPayload {
+    pub input: String,                   // 对应的输入文件路径，用于前端多任务路由
     pub stage: String,
     pub ratio: f64,
     pub message: String,
-    pub elapsed_secs: Option<f64>,  // 当前阶段已用秒数
+    pub elapsed_secs: Option<f64>,       // 当前阶段已用秒数（进行中）
+    pub stage_elapsed_secs: Option<f64>, // 该阶段完成时的耗时（仅阶段完成时设置）
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,20 +155,18 @@ fn resolve_ffmpeg(app: &AppHandle) -> Result<PathBuf, String> {
     Err("未找到 ffmpeg，请在系统中安装 ffmpeg 或重新安装 SubGen".to_string())
 }
 
-fn emit_progress(app: &AppHandle, stage: &str, ratio: f64, message: impl Into<String>) {
-    emit_progress_with_elapsed(app, stage, ratio, message, None);
+fn emit_progress(app: &AppHandle, input: &str, stage: &str, ratio: f64, message: impl Into<String>) {
+    let _ = app.emit("subtitle-progress", ProgressPayload {
+        input: input.to_string(), stage: stage.to_string(), ratio, message: message.into(),
+        elapsed_secs: None, stage_elapsed_secs: None,
+    });
 }
 
-fn emit_progress_with_elapsed(app: &AppHandle, stage: &str, ratio: f64, message: impl Into<String>, elapsed: Option<f64>) {
-    let _ = app.emit(
-        "subtitle-progress",
-        ProgressPayload {
-            stage: stage.to_string(),
-            ratio,
-            message: message.into(),
-            elapsed_secs: elapsed,
-        },
-    );
+fn emit_stage_done(app: &AppHandle, input: &str, stage: &str, stage_elapsed: f64, message: impl Into<String>) {
+    let _ = app.emit("subtitle-progress", ProgressPayload {
+        input: input.to_string(), stage: stage.to_string(), ratio: 1.0, message: message.into(),
+        elapsed_secs: Some(stage_elapsed), stage_elapsed_secs: Some(stage_elapsed),
+    });
 }
 
 
@@ -179,6 +179,14 @@ fn clean_key(value: &Option<String>) -> Option<String> {
 
 fn num_cpus() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+}
+
+/// 绑定 port 0 让 OS 分配一个空闲端口，然后立即释放供 whisper-server 使用
+fn find_free_port() -> Option<u16> {
+    use std::net::TcpListener;
+    TcpListener::bind("127.0.0.1:0").ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
 }
 
 pub fn dirs_cache() -> PathBuf {
@@ -562,6 +570,7 @@ pub fn get_gpu_status() -> serde_json::Value {
             "gpu_type": gpu::gpu_variant_label(detected.gpu_type),
             "name": detected.name,
             "available": detected.available,
+            "vram_mb": detected.vram_mb,
         },
         "active_variant": active_var,
         "active_is_gpu": matches!(active_var, "metal" | "cuda" | "vulkan"),
@@ -569,6 +578,28 @@ pub fn get_gpu_status() -> serde_json::Value {
         "recommended_downloaded": recommended_downloaded,
         "download_url": download_url,
         "download_size_mb": 50,
+    })
+}
+
+/// 返回建议并发数：有 GPU 时按显存算，没有 GPU 串行
+/// 每个 whisper small 模型推理约占 ~1.5 GB 显存，保守按 2 GB 算
+#[tauri::command]
+pub fn get_concurrency() -> serde_json::Value {
+    let info = gpu::detect_gpu();
+    let is_gpu = info.available && !matches!(info.gpu_type, gpu::GpuType::Cpu);
+    let concurrency = if is_gpu {
+        let vram = info.vram_mb.unwrap_or(2048);
+        // 每个任务约 2 GB，保留 1 GB 给系统，最少 1，最多 8
+        let n = ((vram.saturating_sub(1024)) / 2048).max(1).min(8) as usize;
+        n
+    } else {
+        1
+    };
+    serde_json::json!({
+        "concurrency": concurrency,
+        "gpu": is_gpu,
+        "vram_mb": info.vram_mb,
+        "gpu_name": info.name,
     })
 }
 
@@ -949,6 +980,7 @@ async fn split_audio_for_asr(
 
     let app_clone = app.clone();
     let input = input.to_path_buf();
+    let input_str = input.to_string_lossy().to_string();
     let output_pattern = output_pattern.clone();
 
     tokio::task::spawn_blocking(move || {
@@ -984,13 +1016,13 @@ async fn split_audio_for_asr(
                 if let Ok(us) = val.trim().parse::<f64>() {
                     // 留出最后 5% 给 stdout 关闭→child.wait() 之间的收尾写盘
                     let ratio = if total_us > 0.0 { (us / total_us).min(0.90) } else { 0.3 };
-                    emit_progress(&app_clone, "extracting", ratio * 0.3,
+                    emit_progress(&app_clone, &input_str, "extracting", ratio * 0.3,
                         format!("提取音频 {:.0}%", ratio * 100.0));
                 }
             }
         }
         // stdout 关闭即代表 ffmpeg 已完成主要处理，直接推满到提取完成值
-        emit_progress(&app_clone, "extracting", 0.30, "音频提取完成");
+        emit_progress(&app_clone, &input_str, "extracting", 0.30, "音频提取完成");
 
         let status = child.wait()
             .map_err(|e| format!("ffmpeg 等待失败: {e}"))?;
@@ -1804,16 +1836,18 @@ pub async fn generate_subtitles(
     // ASR 缓存
     let asr_cache_file = cache_dir.join(format!("asr_{}_{}.json", opts.asr_provider, opts.source_lang));
     let segments = if !skip_cache && asr_cache_file.exists() {
-        emit_progress(&app, "transcribing", 0.65, "从缓存加载转录结果...");
+        emit_progress(&app, &opts.input, "transcribing", 0.65, "从缓存加载转录结果...");
         let raw = fs::read_to_string(&asr_cache_file).unwrap_or_default();
         serde_json::from_str::<Vec<Segment>>(&raw).unwrap_or_default()
     } else {
         if skip_cache { fs::remove_file(&asr_cache_file).ok(); }
         let temp_dir = env::temp_dir().join(format!("subgen-desktop-{}", Utc::now().timestamp_millis()));
         let t_extract = std::time::Instant::now();
-        emit_progress(&app, "extracting", 0.02, "正在本地提取并分片音频...");
+        emit_progress(&app, &opts.input, "extracting", 0.02, "正在本地提取并分片音频...");
         let chunks = split_audio_for_asr(&app, input, &temp_dir, chunk_seconds).await?;
-        emit_progress(&app, "extracting", 0.30, "音频提取完成，准备转录...");
+        let extract_elapsed = t_extract.elapsed().as_secs_f64();
+        emit_stage_done(&app, &opts.input, "extracting", extract_elapsed,
+            format!("音频提取完成，用时 {:.1}s", extract_elapsed));
         let total = chunks.len();
 
         let segs = if opts.asr_provider == "local-whisper" {
@@ -1834,64 +1868,49 @@ pub async fn generate_subtitles(
 
             if use_server {
                 // 单实例模式：一个 whisper-server 用满所有线程，比多实例互抢资源更快
-                let n_instances = 1usize;
-                let base_port: u16 = 18200;
+                // 随机端口：避免多个文件并发处理时端口冲突
+                let port = find_free_port().unwrap_or(18200);
+                let t_load = std::time::Instant::now();
 
-                emit_progress(&app, "loading_model", 0.32,
+                emit_progress(&app, &opts.input, "loading_model", 0.32,
                     format!("正在加载 Whisper 模型（{}）...", model_name));
 
-                // 启动所有实例
-                let mut servers = Vec::new();
-                for idx in 0..n_instances {
-                    let port = base_port + idx as u16;
-                    let threads_per = (num_cpus() / n_instances).max(1);
-                    let srv = silent_command(&server_bin)
-                        .args([
-                            "-m", &model.to_string_lossy(),
-                            "--port", &port.to_string(),
-                            "-t", &threads_per.to_string(),
-                        ])
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()
-                        .map_err(|e| format!("启动 whisper-server 实例 {idx} 失败: {e}"))?;
-                    servers.push(srv);
-                }
+                let threads = num_cpus();
+                let srv = silent_command(&server_bin)
+                    .args([
+                        "-m", &model.to_string_lossy(),
+                        "--port", &port.to_string(),
+                        "-t", &threads.to_string(),
+                    ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .map_err(|e| format!("启动 whisper-server 失败: {e}"))?;
+                let mut servers = vec![srv];
 
-                // 等待所有实例就绪
+                // 等待实例就绪
                 let client = reqwest::Client::new();
                 let start = std::time::Instant::now();
-                let mut ready = vec![false; n_instances];
                 loop {
                     if start.elapsed().as_secs() > 120 {
                         for s in &mut servers { s.kill().ok(); }
-                        return Err("whisper-server 实例启动超时（>120s）".to_string());
+                        return Err("whisper-server 启动超时（>120s）".to_string());
                     }
-                    for (idx, r) in ready.iter_mut().enumerate() {
-                        if !*r {
-                            let port = base_port + idx as u16;
-                            if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
-                                *r = true;
-                            }
-                        }
-                    }
-                    let n_ready = ready.iter().filter(|&&r| r).count();
-                    if n_ready == n_instances {
-                        emit_progress(&app, "loading_model", 0.38, "模型就绪，正在转录第一个片段...");
+                    if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
+                        let load_elapsed = t_load.elapsed().as_secs_f64();
+                        emit_stage_done(&app, &opts.input, "loading_model", load_elapsed,
+                            format!("模型就绪，用时 {:.1}s", load_elapsed));
                         break;
                     }
                     let elapsed = start.elapsed().as_secs();
                     if elapsed % 5 == 0 && elapsed > 0 {
-                        emit_progress(&app, "loading_model", 0.34,
+                        emit_progress(&app, &opts.input, "loading_model", 0.34,
                             format!("正在加载模型... ({elapsed}s)"));
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 }
 
-                // 并发转录：每个实例一个信号量，确保每个 server 同时只处理一个请求
-                let sems: Vec<_> = (0..n_instances)
-                    .map(|_| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
-                    .collect();
+                // 并发转录（server 内部串行处理，HTTP 队列）
                 let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let mut handles = Vec::new();
 
@@ -1902,13 +1921,11 @@ pub async fn generate_subtitles(
                     let offset = i as f64 * chunk_seconds as f64;
                     let done_count = done_count.clone();
                     let app = app.clone();
-                    let port = base_port + (i % n_instances) as u16;
-                    let sem = sems[i % n_instances].clone();
+                    let input_path = opts.input.clone();
                     handles.push(tokio::spawn(async move {
-                        let _permit = sem.acquire().await.unwrap();
                         let result = transcribe_with_whisper_server(&client, port, &chunk, &lang, offset).await;
                         let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                        emit_progress(&app, "transcribing",
+                        emit_progress(&app, &input_path, "transcribing",
                             0.38 + 0.28 * (done as f64 / total as f64),
                             format!("转录完成 {done}/{total}"));
                         result.map(|s| (i, s))
@@ -1942,11 +1959,12 @@ pub async fn generate_subtitles(
                     let sem = sem.clone();
                     let done_count = done_count.clone();
                     let app = app.clone();
+                    let input_path = opts.input.clone();
                     handles.push(tokio::spawn(async move {
                         let _permit = sem.acquire().await.unwrap();
                         let result = transcribe_with_whisper_legacy(&whisper, &model, &chunk, &lang, offset).await;
                         let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                        emit_progress(&app, "transcribing",
+                        emit_progress(&app, &input_path, "transcribing",
                             0.38 + 0.28 * (done as f64 / total as f64),
                             format!("转录完成 {done}/{total}"));
                         result.map(|s| (i, s))
@@ -2003,7 +2021,7 @@ pub async fn generate_subtitles(
                 match handle.await {
                     Ok(Ok(r)) => {
                         let done = results.len() + 1;
-                        emit_progress(&app, "transcribing",
+                        emit_progress(&app, &opts.input, "transcribing",
                             0.32 + 0.33 * (done as f64 / total as f64),
                             format!("转录完成 {done}/{total}..."));
                         results.push(r);
@@ -2021,8 +2039,8 @@ pub async fn generate_subtitles(
             return Err("未检测到语音内容".to_string());
         }
         let asr_elapsed = t_extract.elapsed().as_secs_f64();
-        emit_progress_with_elapsed(&app, "transcribing", 0.66,
-            format!("转录完成，用时 {:.0}s", asr_elapsed), Some(asr_elapsed));
+        emit_stage_done(&app, &opts.input, "transcribing", asr_elapsed,
+            format!("转录完成，用时 {:.1}s", asr_elapsed));
         if let Ok(json) = serde_json::to_string(&segs) {
             fs::write(&asr_cache_file, json).ok();
         }
@@ -2031,14 +2049,13 @@ pub async fn generate_subtitles(
 
     let client = reqwest::Client::new();
     let t_translate = std::time::Instant::now();
-    emit_progress(&app, "translating", 0.72, "正在翻译字幕...");
+    emit_progress(&app, &opts.input, "translating", 0.72, "正在翻译字幕...");
     let translated = translate_segments(&client, &segments, &opts, Some(&cache_dir)).await?;
     let trl_elapsed = t_translate.elapsed().as_secs_f64();
+    emit_stage_done(&app, &opts.input, "translating", trl_elapsed,
+        format!("翻译完成，用时 {:.1}s", trl_elapsed));
 
-    emit_progress_with_elapsed(&app, "translating", 0.92,
-        format!("翻译完成，用时 {:.0}s", trl_elapsed), Some(trl_elapsed));
-
-    emit_progress(&app, "saving", 0.94, "正在写入字幕文件...");
+    emit_progress(&app, &opts.input, "saving", 0.94, "正在写入字幕文件...");
     let stem = file_stem(input);
     let output_dir = PathBuf::from(&opts.output_dir);
     let original_path = output_dir.join(format!("{stem}.original.srt"));
@@ -2057,8 +2074,8 @@ pub async fn generate_subtitles(
     };
 
     let total_elapsed = t_start.elapsed().as_secs_f64();
-    emit_progress_with_elapsed(&app, "done", 1.0,
-        format!("完成，总用时 {:.0}s", total_elapsed), Some(total_elapsed));
+    emit_stage_done(&app, &opts.input, "done", total_elapsed,
+        format!("完成，总用时 {:.1}s", total_elapsed));
 
     // 不自动写文件，返回 SRT 内容让前端用户选择保存
     Ok(GenerateResult {

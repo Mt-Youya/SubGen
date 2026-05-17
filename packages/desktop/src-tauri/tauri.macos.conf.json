@@ -6,8 +6,6 @@
       "resources/libwhisper.1.dylib": "libwhisper.1.dylib",
       "resources/libggml.0.dylib": "libggml.0.dylib",
       "resources/libggml-base.0.dylib": "libggml-base.0.dylib",
-      "resources/libggml-metal.0.dylib": "libggml-metal.0.dylib",
-      "resources/ggml-metal.metal": "ggml-metal.metal",
       "resources/ffmpeg": "ffmpeg"
     },
     "macOS": {

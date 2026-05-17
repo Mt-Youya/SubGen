@@ -22,6 +22,7 @@ pub fn run() {
             commands::get_file_sizes,
             commands::detect_gpu,
             commands::get_gpu_status,
+            commands::get_concurrency,
             commands::download_gpu_whisper,
             commands::install_gpu_archive,
         ])

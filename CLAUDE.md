@@ -43,6 +43,16 @@ Output with CHINESE.
 
 二进制文件由 CI 下载或用户通过 UI 授权安装。
 
+## CI 注意事项
+
+修改 `.github/workflows/build-desktop.yml` 时，每个平台的步骤必须完全隔离，不得影响其他平台：
+
+- macOS 步骤只改 `if: matrix.platform == 'macos'` 块
+- Windows 步骤只改 `if: matrix.platform == 'windows-x64'` 块
+- Linux 步骤只改 `if: matrix.platform == 'linux-x64'` 块
+
+改动前先确认各平台边界，改动后在 commit 说明中注明"仅影响 macOS / Windows / Linux"。
+
 # [CLAUDE.md](https://github.com/forrestchang/andrej-karpathy-skills/blob/main/CLAUDE.md)
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
