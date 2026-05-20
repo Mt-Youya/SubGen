@@ -14,7 +14,16 @@ Output with CHINESE.
 
 | 路径 | 说明 |
 |------|------|
-| `packages/desktop/src-tauri/src/commands.rs` | 所有 Rust 命令（转录、翻译、依赖检查、GPU 下载/安装） |
+| `packages/desktop/src-tauri/src/commands/` | Rust 命令模块目录（拆分自 commands.rs） |
+| `packages/desktop/src-tauri/src/commands/asr.rs` | ASR 转录命令 |
+| `packages/desktop/src-tauri/src/commands/pipeline.rs` | 并行任务管道（GPU 并发调度） |
+| `packages/desktop/src-tauri/src/commands/translation.rs` | 翻译命令 |
+| `packages/desktop/src-tauri/src/commands/deps.rs` | 依赖检查命令 |
+| `packages/desktop/src-tauri/src/commands/gpu_cmd.rs` | GPU 下载/安装命令 |
+| `packages/desktop/src-tauri/src/commands/ffmpeg_cmd.rs` | FFmpeg 相关命令 |
+| `packages/desktop/src-tauri/src/commands/whisper_cmd.rs` | Whisper 相关命令 |
+| `packages/desktop/src-tauri/src/commands/types.rs` | 命令共用类型定义 |
+| `packages/desktop/src-tauri/src/commands/utils.rs` | 命令工具函数 |
 | `packages/desktop/src-tauri/src/lib.rs` | Tauri 命令注册 |
 | `packages/desktop/src-tauri/src/gpu.rs` | GPU 检测模块（CUDA/Vulkan/Metal 跨平台） |
 | `packages/desktop/app/page.tsx` | 桌面版首页（依赖检查 + Tab 切换 + ThemeToggle） |
