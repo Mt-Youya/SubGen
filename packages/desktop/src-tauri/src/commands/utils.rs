@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::process::Command;
-use std::{env, fs};
+use std::env;
+#[cfg(unix)]
+use std::fs;
 
 use tauri::{AppHandle, Emitter};
 
@@ -76,17 +78,26 @@ pub fn find_free_port() -> Option<u16> {
         .map(|a| a.port())
 }
 
-/// 返回 SubGen 的用户级缓存目录（~/.subgen_cache）。
-/// 模型、翻译缓存、GPU 二进制都存放在这里，与应用安装目录解耦，
-/// 重装应用不会丢失已下载的模型。
-/// Windows 下优先用 USERPROFILE，其次 APPDATA，最终兜底用当前目录 "."。
+/// 返回 SubGen 的用户级缓存目录。
+/// - Windows: {exe所在目录}\.subgen_cache（模型和 GPU 二进制跟 exe 走）
+/// - macOS/Linux: ~/.subgen_cache/
 pub fn dirs_cache() -> PathBuf {
-    let base = if cfg!(windows) {
-        env::var("USERPROFILE").or_else(|_| env::var("APPDATA")).unwrap_or_else(|_| ".".into())
-    } else {
-        env::var("HOME").unwrap_or_else(|_| ".".into())
-    };
-    PathBuf::from(base).join(".subgen_cache")
+    #[cfg(target_os = "windows")]
+    {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join(".subgen_cache")))
+            .unwrap_or_else(|| {
+                let fallback = env::var("USERPROFILE")
+                    .or_else(|_| env::var("APPDATA"))
+                    .unwrap_or_else(|_| ".".into());
+                PathBuf::from(fallback).join(".subgen_cache")
+            })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".into())).join(".subgen_cache")
+    }
 }
 
 /// 给文件设置 Unix 可执行权限（0o755）。

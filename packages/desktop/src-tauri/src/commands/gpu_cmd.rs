@@ -208,19 +208,26 @@ pub fn get_gpu_status() -> serde_json::Value {
     })
 }
 
-/// 根据显存大小返回建议的并发转录任务数。
+/// 根据显存大小和模型尺寸返回建议的并发转录任务数。
 ///
-/// whisper small 模型单次推理约占 ~1.5 GB 显存，保守按 2 GB 算；
-/// 系统预留 1 GB 给驱动 / 其他进程，剩余显存均分给并发任务。
+/// 每任务显存占用 ≈ 模型大小 × 2（模型 + 推理工作缓冲区）；
+/// 系统预留 1 GB 给驱动 / 其他进程。
 /// 无 GPU 时返回 1（串行），避免多进程抢 CPU 导致性能下降。
 #[tauri::command]
-pub fn get_concurrency() -> serde_json::Value {
+pub fn get_concurrency(model: Option<String>) -> serde_json::Value {
     let info = gpu::detect_gpu();
     let is_gpu = info.available && !matches!(info.gpu_type, gpu::GpuType::Cpu);
     let concurrency = if is_gpu {
         let vram = info.vram_mb.unwrap_or(2048);
-        // 公式：(可用显存 MB - 1024 MB 系统预留) / 2048 MB，最少 1，最多 8
-        let n = ((vram.saturating_sub(1024)) / 2048).max(1).min(8) as usize;
+        let model_size_mb = match model.as_deref() {
+            Some("base") => 142,
+            Some("small") => 466,
+            Some("medium") => 1536,
+            Some("large-v3") => 3174,
+            _ => 466, // 默认 small
+        };
+        let per_task_mb = model_size_mb * 2;
+        let n = ((vram.saturating_sub(1024)) / per_task_mb).max(1).min(8) as usize;
         n
     } else {
         1
@@ -400,6 +407,22 @@ pub async fn download_gpu_whisper(
 
     emit_gpu_progress(&app, &variant, 1.0, "下载完成");
     Ok(target_dir.to_string_lossy().to_string())
+}
+
+/// 返回 GPU 二进制目录路径，供前端打开文件夹。
+#[tauri::command]
+pub fn get_gpu_bin_dir() -> String {
+    crate::gpu::gpu_bin_dir().to_string_lossy().to_string()
+}
+
+/// 清除 GPU 加速二进制缓存目录。
+#[tauri::command]
+pub fn clear_gpu_cache() -> Result<(), String> {
+    let dir = crate::gpu::gpu_bin_dir();
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| format!("清除 GPU 缓存失败: {e}"))?;
+    }
+    Ok(())
 }
 
 /// 安装用户手动下载的 GPU 加速压缩包（zip 或 tar.xz）。

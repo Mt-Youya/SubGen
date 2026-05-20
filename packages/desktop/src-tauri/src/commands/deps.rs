@@ -4,7 +4,9 @@ use std::env;
 use tauri::{AppHandle, Manager};
 
 use crate::gpu;
-use super::utils::{dirs_cache, set_executable};
+use super::utils::dirs_cache;
+#[cfg(unix)]
+use super::utils::set_executable;
 
 /// 查找可用的 ffmpeg 可执行文件，返回完整路径。
 ///

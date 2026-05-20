@@ -91,7 +91,7 @@ pub async fn download_whisper_model(
         .map_err(|e| format!("创建模型目录失败: {e}"))?;
 
     let url = format!(
-        "https://hf-mirror.com/ggml-org/whisper.cpp/resolve/main/ggml-{name}.bin"
+        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-{name}.bin"
     );
 
     let client = reqwest::Client::new();
@@ -128,6 +128,12 @@ pub async fn download_whisper_model(
         "ratio": 1.0,
     })).ok();
     Ok(target_path.to_string_lossy().to_string())
+}
+
+/// 返回模型目录路径，供前端打开文件夹。
+#[tauri::command]
+pub fn get_models_dir() -> String {
+    super::utils::dirs_cache().join("models").to_string_lossy().to_string()
 }
 
 /// 删除已下载的 Whisper 模型文件，释放磁盘空间。

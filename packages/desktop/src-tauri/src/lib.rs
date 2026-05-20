@@ -28,14 +28,18 @@ pub fn run() {
             commands::whisper_cmd::check_whisper_model,
             commands::whisper_cmd::download_whisper_model,
             commands::whisper_cmd::delete_whisper_model,
+            commands::whisper_cmd::get_models_dir,
             // GPU 检测与加速包管理
             commands::gpu_cmd::detect_gpu,
             commands::gpu_cmd::get_gpu_status,
             commands::gpu_cmd::get_concurrency,
             commands::gpu_cmd::download_gpu_whisper,
             commands::gpu_cmd::install_gpu_archive,
+            commands::gpu_cmd::clear_gpu_cache,
+            commands::gpu_cmd::get_gpu_bin_dir,
             // 主业务流程与文件工具
             commands::pipeline::generate_subtitles,
+            commands::pipeline::cancel_subtitle,
             commands::pipeline::reveal_in_finder,
             commands::pipeline::save_srt,
             commands::pipeline::get_file_sizes,

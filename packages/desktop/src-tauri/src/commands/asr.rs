@@ -26,14 +26,15 @@ pub async fn split_audio_for_asr(
     input: &Path,
     chunk_dir: &Path,
     chunk_seconds: u32,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Vec<PathBuf>, String> {
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
+    use std::sync::atomic::Ordering;
     use super::deps::resolve_ffmpeg;
 
     let ffmpeg = resolve_ffmpeg(app)?;
     fs::create_dir_all(chunk_dir).map_err(|e| format!("创建临时目录失败: {e}"))?;
-    // chunk_%05d.wav：5 位零填充序号，支持最多 99999 个分片（约 7 天音频）
     let output_pattern = chunk_dir.join("chunk_%05d.wav");
 
     let app_clone = app.clone();
@@ -46,15 +47,15 @@ pub async fn split_audio_for_asr(
         cmd
             .args(["-y", "-hide_banner", "-loglevel", "quiet"])
             .arg("-i").arg(&input)
-            .arg("-vn")                    // 丢弃视频流，只保留音频
-            .arg("-acodec").arg("pcm_s16le") // 16-bit PCM，whisper.cpp 要求的格式
-            .arg("-ar").arg("16000")       // 采样率 16kHz，Whisper 训练数据的标准采样率
-            .arg("-ac").arg("1")           // 单声道，减小文件体积，Whisper 不需要立体声
-            .arg("-progress").arg("pipe:1") // 进度信息写到 stdout，让 Rust 侧可以解析
-            .arg("-nostats")               // 关闭 stderr 统计，减少噪音
-            .arg("-f").arg("segment")      // 使用 segment muxer 实现分片
+            .arg("-vn")
+            .arg("-acodec").arg("pcm_s16le")
+            .arg("-ar").arg("16000")
+            .arg("-ac").arg("1")
+            .arg("-progress").arg("pipe:1")
+            .arg("-nostats")
+            .arg("-f").arg("segment")
             .arg("-segment_time").arg(chunk_seconds.to_string())
-            .arg("-reset_timestamps").arg("1") // 每个分片从 0 开始计时，方便后续加偏移
+            .arg("-reset_timestamps").arg("1")
             .arg(&output_pattern)
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -65,21 +66,26 @@ pub async fn split_audio_for_asr(
 
         let mut total_us: f64 = 0.0;
         for line in reader.lines().map_while(Result::ok) {
+            if cancel.load(Ordering::SeqCst) {
+                child.kill().ok();
+                return Err("已取消".to_string());
+            }
             if let Some(val) = line.strip_prefix("duration=") {
-                // duration= 是媒体文件总时长（微秒），用于计算百分比
                 if let Ok(us) = val.trim().parse::<f64>() {
                     if us > 0.0 { total_us = us; }
                 }
             } else if let Some(val) = line.strip_prefix("out_time_us=") {
                 if let Ok(us) = val.trim().parse::<f64>() {
-                    // 留出最后 10% 给 stdout 关闭和子进程退出的收尾时间，避免进度条长时间卡在 99%
                     let ratio = if total_us > 0.0 { (us / total_us).min(0.90) } else { 0.3 };
                     emit_progress(&app_clone, &input_str, "extracting", ratio * 0.3,
                         format!("提取音频 {:.0}%", ratio * 100.0));
                 }
             }
         }
-        // stdout 关闭说明 ffmpeg 已完成主要写入，推进到提取完成节点
+        if cancel.load(Ordering::SeqCst) {
+            child.kill().ok();
+            return Err("已取消".to_string());
+        }
         emit_progress(&app_clone, &input_str, "extracting", 0.30, "音频提取完成");
 
         let status = child.wait().map_err(|e| format!("ffmpeg 等待失败: {e}"))?;
@@ -93,7 +99,7 @@ pub async fn split_audio_for_asr(
             .filter_map(|entry| entry.ok().map(|e| e.path()))
             .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("wav"))
             .collect::<Vec<_>>();
-        chunks.sort(); // 按文件名排序确保时间顺序正确
+        chunks.sort();
 
         if chunks.is_empty() {
             return Err("未能从媒体文件提取到音频".to_string());

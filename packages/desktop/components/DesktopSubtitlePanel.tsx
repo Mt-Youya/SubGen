@@ -309,7 +309,24 @@ function ModelSelect({ value, onChange, downloadedModels, downloadingModel, down
       {open && (
         <div className="absolute z-50 mt-1 w-full rounded-md"
           style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border)", boxShadow: "0 8px 24px oklch(0% 0 0 / 40%)", overflow: "hidden" }}>
-          {WHISPER_MODELS.map((m) => {
+            <div className="flex items-center justify-between px-3 py-1.5"
+              style={{ borderBottom: "0.5px solid var(--color-border)" }}>
+              <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>Whisper 模型</span>
+              <button type="button"
+                onClick={async e => {
+                  e.stopPropagation();
+                  try {
+                    const { invoke } = await import("@tauri-apps/api/core");
+                    const dir = await invoke<string>("get_models_dir");
+                    await invoke("reveal_in_finder", { path: dir });
+                  } catch (err) { alert(`打开失败: ${err}`); }
+                }}
+                className="rounded px-1.5 py-0.5 text-xs"
+                style={{ color: "var(--color-accent)" }}>
+                打开目录
+              </button>
+            </div>
+            {WHISPER_MODELS.map((m) => {
             const downloaded = downloadedModels.has(m.name);
             const isDownloading = downloadingModel === m.name;
             const pct = Math.round((downloadProgress[m.name] ?? 0) * 100);
@@ -528,10 +545,19 @@ export function DesktopSubtitlePanel() {
         download_url: string;
       }>("get_gpu_status").then(s => setGpuStatus(s)).catch(() => null);
       invoke<{ concurrency: number; gpu: boolean; vram_mb: number | null; gpu_name: string }>(
-        "get_concurrency"
+        "get_concurrency", { model: settings.whisperModel }
       ).then(r => setConcurrency(r.concurrency)).catch(() => null);
     });
   }, [isTauri]);
+
+  // 模型切换时刷新并发数
+  useEffect(() => {
+    if (!isTauri) return;
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke<{ concurrency: number }>("get_concurrency", { model: settings.whisperModel })
+        .then(r => setConcurrency(r.concurrency)).catch(() => null);
+    });
+  }, [isTauri, settings.whisperModel]);
 
   const downloadGpuWhisper = useCallback(async () => {
     setGpuDownloading(true);
@@ -560,12 +586,18 @@ export function DesktopSubtitlePanel() {
     import("@tauri-apps/api/event")
       .then(({ listen }) => listen<ProgressPayload & { input: string }>("subtitle-progress", e => {
         const path = e.payload.input;
-        targetRatioRef.current[path] = e.payload.ratio;
+        const isStageDone = e.payload.stage_elapsed_secs != null;
+        // stage_done 的 ratio 是 1.0（阶段内完成），不是总进度，不更新 targetRatio
+        if (!isStageDone) {
+          targetRatioRef.current[path] = e.payload.ratio;
+        }
         setTasks(prev => prev.map(t => {
           if (t.path !== path) return t;
-          const stageTiming = e.payload.stage_elapsed_secs != null
-            ? { ...t.stageTiming, [e.payload.stage]: e.payload.stage_elapsed_secs }
-            : t.stageTiming;
+          let stageTiming = t.stageTiming;
+          const elapsed = e.payload.stage_elapsed_secs;
+          if (isStageDone && elapsed != null) {
+            stageTiming = { ...stageTiming, [e.payload.stage]: elapsed as number };
+          }
           return { ...t, progress: e.payload, stageTiming };
         }));
       }))
@@ -797,6 +829,17 @@ export function DesktopSubtitlePanel() {
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
+    // 通知 Rust 端取消所有正在处理的任务
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      setTasks(prev => {
+        for (const t of prev) {
+          if (t.status === "processing") {
+            invoke("cancel_subtitle", { input: t.path }).catch(() => {});
+          }
+        }
+        return prev;
+      });
+    });
   }, []);
 
   const handleRetry = useCallback(async (path: string) => {
@@ -1111,11 +1154,9 @@ export function DesktopSubtitlePanel() {
                                       {s.label}
                                     </span>
                                   </div>
-                                  {stepElapsed != null && (
-                                    <span className="text-[10px] tabular-nums" style={{ color: "var(--color-accent)" }}>
-                                      {stepElapsed.toFixed(1)}s
-                                    </span>
-                                  )}
+                                  <span className="text-[10px] tabular-nums h-[12px]" style={{ color: "var(--color-accent)", opacity: stepElapsed != null ? 1 : 0 }}>
+                                    {stepElapsed != null ? `${stepElapsed.toFixed(1)}s` : "0.0s"}
+                                  </span>
                                 </div>
                                 {i < PIPELINE_STEPS.length - 1 && (
                                   <div className="flex-1 h-px mx-1 rounded-full transition-all duration-500 self-start mt-2.5"
@@ -1270,6 +1311,22 @@ export function DesktopSubtitlePanel() {
                       <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
                         {gpuStatus.detected.name} ({gpuStatus.active_variant.toUpperCase()}) ✓ 已启用
                       </span>
+                      <button
+                        onClick={async () => {
+                          try {
+                            const { invoke } = await import("@tauri-apps/api/core");
+                            const dir = await invoke<string>("get_gpu_bin_dir");
+                            await invoke("reveal_in_finder", { path: dir });
+                          } catch (e) { alert(`打开失败: ${e}`); }
+                        }}
+                        className="rounded px-2 py-0.5 text-xs"
+                        style={{
+                          border: "0.5px solid var(--color-accent)",
+                          color: "var(--color-accent)",
+                        }}
+                      >
+                        打开目录
+                      </button>
                       <button
                         onClick={async () => {
                           try {

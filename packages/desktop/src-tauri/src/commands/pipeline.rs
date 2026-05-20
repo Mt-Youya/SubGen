@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}, LazyLock, Mutex};
+use std::collections::HashMap;
 use std::{env, fs};
 
 use chrono::Utc;
@@ -10,6 +12,20 @@ use super::deps::{model_path, resolve_whisper, resolve_whisper_server};
 use super::translation::translate_segments;
 use super::types::{GenerateOptions, GenerateResult, Segment};
 use super::utils::{dirs_cache, emit_progress, emit_stage_done, find_free_port, num_cpus};
+
+/// 全局取消标志：input_path → 取消信号
+static CANCEL_FLAGS: LazyLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 函数退出时自动从 CANCEL_FLAGS 中移除对应条目
+struct CancelGuard(String);
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = CANCEL_FLAGS.lock() {
+            map.remove(&self.0);
+        }
+    }
+}
 
 // ─────────────────────────────────────────────
 // SRT 格式化工具
@@ -134,6 +150,16 @@ pub fn save_srt(path: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| format!("保存失败: {e}"))
 }
 
+/// 取消指定文件的字幕生成任务。
+#[tauri::command]
+pub fn cancel_subtitle(input: String) {
+    if let Ok(map) = CANCEL_FLAGS.lock() {
+        if let Some(flag) = map.get(&input) {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 /// 字幕生成主流程：音频提取 → ASR 转录 → 翻译 → 返回 SRT 内容。
 ///
 /// 完整流程：
@@ -155,6 +181,14 @@ pub async fn generate_subtitles(
         return Err(format!("输入文件不存在: {}", opts.input));
     }
     fs::create_dir_all(&opts.output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
+
+    // 注册取消标志，函数退出时自动清理
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = CANCEL_FLAGS.lock().map_err(|e| format!("锁取消标志失败: {e}"))?;
+        map.insert(opts.input.clone(), cancel.clone());
+    }
+    let _cleanup = CancelGuard(opts.input.clone());
 
     // 将 chunk_seconds 限制在 [60, 600] 范围内，避免分片过短（频繁 API 调用）或过长（超限）
     let chunk_seconds = opts.chunk_seconds.unwrap_or(240).clamp(60, 600);
@@ -207,7 +241,8 @@ pub async fn generate_subtitles(
         ));
         let t_extract = std::time::Instant::now();
         emit_progress(&app, &opts.input, "extracting", 0.02, "正在本地提取并分片音频...");
-        let chunks = split_audio_for_asr(&app, input, &temp_dir, chunk_seconds).await?;
+        let chunks = split_audio_for_asr(&app, input, &temp_dir, chunk_seconds, cancel.clone()).await?;
+        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
         let extract_elapsed = t_extract.elapsed().as_secs_f64();
         emit_stage_done(
             &app, &opts.input, "extracting", extract_elapsed,
@@ -215,6 +250,7 @@ pub async fn generate_subtitles(
         );
         let total = chunks.len();
 
+        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
         let segs = if opts.asr_provider == "local-whisper" {
             // ── 本地 Whisper 模式 ──────────────────────────────
             // server 优先（模型常驻内存，多 chunk 复用），cli 兜底（每次重新加载模型）
@@ -260,6 +296,10 @@ pub async fn generate_subtitles(
                 let client = reqwest::Client::new();
                 let start = std::time::Instant::now();
                 loop {
+                    if cancel.load(Ordering::SeqCst) {
+                        for s in &mut servers { s.kill().ok(); }
+                        return Err("已取消".to_string());
+                    }
                     if start.elapsed().as_secs() > 120 {
                         for s in &mut servers { s.kill().ok(); }
                         return Err("whisper-server 启动超时（>120s）".to_string());
@@ -286,6 +326,7 @@ pub async fn generate_subtitles(
                     std::sync::atomic::AtomicUsize::new(0),
                 );
                 let mut handles = Vec::new();
+                let cancel_srv = cancel.clone();
 
                 for (i, chunk) in chunks.iter().enumerate() {
                     let client = client.clone();
@@ -295,11 +336,12 @@ pub async fn generate_subtitles(
                     let done_count = done_count.clone();
                     let app = app.clone();
                     let input_path = opts.input.clone();
+                    let cancel = cancel_srv.clone();
                     handles.push(tokio::spawn(async move {
+                        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
                         let result = transcribe_with_whisper_server(
                             &client, port, &chunk, &lang, offset,
                         ).await;
-                        // 原子计数，线程安全地统计已完成数量
                         let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                         emit_progress(
                             &app, &input_path, "transcribing",
@@ -312,6 +354,10 @@ pub async fn generate_subtitles(
 
                 let mut results = Vec::new();
                 for h in handles {
+                    if cancel.load(Ordering::SeqCst) {
+                        for s in &mut servers { s.kill().ok(); }
+                        return Err("已取消".to_string());
+                    }
                     match h.await {
                         Ok(Ok(r))  => results.push(r),
                         Ok(Err(e)) => { for s in &mut servers { s.kill().ok(); } return Err(e); }
@@ -330,6 +376,7 @@ pub async fn generate_subtitles(
                     std::sync::atomic::AtomicUsize::new(0),
                 );
                 let mut handles = Vec::new();
+                let cancel_cli = cancel.clone();
 
                 for (i, chunk) in chunks.iter().enumerate() {
                     let whisper = whisper.clone();
@@ -341,8 +388,9 @@ pub async fn generate_subtitles(
                     let done_count = done_count.clone();
                     let app = app.clone();
                     let input_path = opts.input.clone();
+                    let cancel = cancel_cli.clone();
                     handles.push(tokio::spawn(async move {
-                        // 获取信号量许可，超出并发限制时等待
+                        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
                         let _permit = sem.acquire().await.unwrap();
                         let result = transcribe_with_whisper_legacy(
                             &whisper, &model, &chunk, &lang, offset,
@@ -359,6 +407,7 @@ pub async fn generate_subtitles(
 
                 let mut results = Vec::new();
                 for h in handles {
+                    if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
                     match h.await {
                         Ok(Ok(r))  => results.push(r),
                         Ok(Err(e)) => return Err(e),
@@ -372,6 +421,7 @@ pub async fn generate_subtitles(
             // ── 云 API 转录（Groq / SiliconFlow）全并发 ───────────
             let client_ref = reqwest::Client::new();
             let mut handles = Vec::new();
+            let cancel_cloud = cancel.clone();
             for (i, chunk) in chunks.iter().enumerate() {
                 let client = client_ref.clone();
                 let chunk = chunk.clone();
@@ -380,7 +430,9 @@ pub async fn generate_subtitles(
                 let groq_key = opts.groq_api_key.clone();
                 let sf_key = opts.siliconflow_api_key.clone();
                 let offset = i as f64 * chunk_seconds as f64;
+                let cancel = cancel_cloud.clone();
                 handles.push(tokio::spawn(async move {
+                    if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
                     // 构造一个最小化的 GenerateOptions 供 transcribe_chunk 读取 API key
                     let opts_clone = GenerateOptions {
                         input: String::new(),
@@ -418,6 +470,7 @@ pub async fn generate_subtitles(
 
             let mut results: Vec<(usize, Vec<Segment>)> = Vec::new();
             for handle in handles {
+                if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
                 match handle.await {
                     Ok(Ok(r)) => {
                         let done = results.len() + 1;

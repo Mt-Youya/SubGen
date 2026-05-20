@@ -166,15 +166,24 @@ fn detect_windows() -> GpuInfo {
 
 #[cfg(target_os = "windows")]
 fn get_vram_windows() -> Option<u64> {
-    // wmic 是 Windows 内置的 WMI 命令行工具，可以查询硬件信息。
-    // win32_VideoController 类的 AdapterRAM 字段以字节为单位返回显存容量。
-    // /format:csv 让输出为 CSV 格式，便于按逗号分隔解析，无需依赖 XML 解析库。
+    // nvidia-smi 优先：wmic AdapterRAM 是 32 位字段，4GB 以上不准确
+    if let Ok(out) = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+        .output()
+    {
+        if let Some(mib) = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()
+            .and_then(|l| l.trim().parse::<u64>().ok())
+        {
+            return Some(mib);
+        }
+    }
+    // 兜底：wmic
     let out = std::process::Command::new("wmic")
         .args(["path", "win32_VideoController", "get", "AdapterRAM,Name", "/format:csv"])
         .output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
-    // CSV 输出每行格式：节点名,AdapterRAM,Name
-    // 优先匹配 NVIDIA/AMD/Intel 行，避免把虚拟显卡（如 Remote Desktop）的数据误报。
     for line in text.lines() {
         let parts: Vec<&str> = line.split(',').collect();
         if parts.len() < 3 { continue; }
@@ -182,8 +191,7 @@ fn get_vram_windows() -> Option<u64> {
         let name = parts[2].trim().to_lowercase();
         if name.contains("nvidia") || name.contains("amd") || name.contains("intel") {
             if let Ok(bytes) = ram_str.parse::<u64>() {
-                // bytes > 0 过滤掉 wmic 输出的标题行和空行
-                if bytes > 0 { return Some(bytes / 1024 / 1024); } // 字节 → MB
+                if bytes > 0 { return Some(bytes / 1024 / 1024); }
             }
         }
     }
@@ -293,8 +301,9 @@ fn get_nvidia_name_linux() -> String {
         .unwrap_or_else(|| "NVIDIA GPU".into())
 }
 
-/// 返回 GPU 加速二进制的缓存目录（~/.subgen_cache/bin/）。
-/// 与模型目录（~/.subgen_cache/models/）分开，方便用户单独删除 GPU 二进制而不影响模型。
+/// 返回 GPU 加速二进制的缓存目录（{cache}/bin/）。
+/// - Windows: {exe目录}\.subgen_cache\bin\
+/// - macOS/Linux: ~/.subgen_cache/bin/
 pub fn gpu_bin_dir() -> PathBuf {
     // super:: 引用父模块（crate 根），通过 commands/mod.rs 重导出的 dirs_cache()。
     // 这里不重复实现目录逻辑，保持单一数据源原则。
