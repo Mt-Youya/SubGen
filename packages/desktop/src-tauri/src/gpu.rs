@@ -1,8 +1,49 @@
+use std::io::Read;
 use std::path::PathBuf;
+use std::process::Command;
+use std::time::Duration;
 
 // serde::Serialize 让枚举/结构体可以被序列化为 JSON，
 // 这样 detect_gpu() 的结果才能通过 Tauri IPC 返回给前端。
 use serde::Serialize;
+
+/// 静默执行命令并读取 stdout，超时后 kill 进程并返回 None。
+/// Windows 下自动设置 CREATE_NO_WINDOW 避免弹出 cmd 黑窗。
+fn run_cmd_silent(cmd: &mut Command, timeout_secs: u64) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                let mut out = String::new();
+                child.stdout.take()?.read_to_string(&mut out).ok()?;
+                return Some(out.trim().to_string());
+            }
+            Ok(Some(_)) => return None,
+            Ok(None) => {
+                if start.elapsed() > Duration::from_secs(timeout_secs) {
+                    child.kill().ok();
+                    child.wait().ok();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => {
+                child.kill().ok();
+                return None;
+            }
+        }
+    }
+}
 
 // derive(Debug) 方便在日志/panic 信息中打印值；
 // Clone/Copy 允许按值复制（枚举很小，复制比引用传递更简洁）；
@@ -63,11 +104,11 @@ fn detect_macos() -> GpuInfo {
     // system_profiler 是 macOS 内置的硬件信息工具，-json 输出结构化数据便于解析。
     // 之所以不用第三方 crate，是为了避免增加编译依赖和二进制体积；
     // ok() 把 Err 转为 None，任何步骤失败都不会 panic，而是优雅降级。
-    let sp = std::process::Command::new("system_profiler")
-        .args(["SPDisplaysDataType", "-json"])
-        .output()
-        .ok()
-        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok());
+    let sp = run_cmd_silent(
+        Command::new("system_profiler").args(["SPDisplaysDataType", "-json"]),
+        5,
+    )
+    .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok());
 
     // SPDisplaysDataType 是一个数组，每个元素对应一块显示适配器。
     // 取第一个即为主 GPU（MacBook 通常只有一个）。
@@ -110,10 +151,11 @@ fn detect_macos() -> GpuInfo {
         // 终极 fallback：两个 spdisplays_vram* 字段都读不到时，
         // 用 SPHardwareDataType 里的 physical_memory（系统总 RAM），
         // 取一半作为 Apple Silicon 可分配给 GPU 的保守估算。
-        let hw = std::process::Command::new("system_profiler")
-            .args(["SPHardwareDataType", "-json"])
-            .output().ok()
-            .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())?;
+        let hw = run_cmd_silent(
+            Command::new("system_profiler").args(["SPHardwareDataType", "-json"]),
+            5,
+        )
+        .and_then(|out| serde_json::from_str::<serde_json::Value>(&out).ok())?;
         let mem_str = hw.get("SPHardwareDataType")?.as_array()?.first()?
             .get("physical_memory")?.as_str()?;
         // "16 GB" → 8192 MB（只取一半，给操作系统/其他进程留余量）
@@ -167,24 +209,20 @@ fn detect_windows() -> GpuInfo {
 #[cfg(target_os = "windows")]
 fn get_vram_windows() -> Option<u64> {
     // nvidia-smi 优先：wmic AdapterRAM 是 32 位字段，4GB 以上不准确
-    if let Ok(out) = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
-        .output()
-    {
-        if let Some(mib) = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .next()
-            .and_then(|l| l.trim().parse::<u64>().ok())
-        {
+    if let Some(out) = run_cmd_silent(
+        Command::new("nvidia-smi").args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"]),
+        3,
+    ) {
+        if let Some(mib) = out.lines().next().and_then(|l| l.trim().parse::<u64>().ok()) {
             return Some(mib);
         }
     }
     // 兜底：wmic
-    let out = std::process::Command::new("wmic")
-        .args(["path", "win32_VideoController", "get", "AdapterRAM,Name", "/format:csv"])
-        .output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
+    let out = run_cmd_silent(
+        Command::new("wmic").args(["path", "win32_VideoController", "get", "AdapterRAM,Name", "/format:csv"]),
+        5,
+    )?;
+    for line in out.lines() {
         let parts: Vec<&str> = line.split(',').collect();
         if parts.len() < 3 { continue; }
         let ram_str = parts[1].trim();
@@ -203,18 +241,16 @@ fn get_nvidia_name_windows() -> String {
     // 通过 wmic 获取 NVIDIA GPU 名称（兼容性好，不依赖额外 DLL）。
     // 使用 wmic 而非 nvml.dll 的原因：nvml 需要额外的 DLL 依赖和复杂的 FFI 绑定，
     // 而 wmic 在所有 Windows 版本上都可用，且只需要读取公开的 WMI 数据。
-    std::process::Command::new("wmic")
-        .args(["path", "win32_VideoController", "get", "name", "/format:csv"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            let out = String::from_utf8_lossy(&o.stdout);
-            // 在所有行中找第一个包含 "nvidia" 的行，取第二个 CSV 字段作为 GPU 名。
-            out.lines()
-                .find(|l| l.to_lowercase().contains("nvidia"))
-                .map(|l| l.split(',').nth(1).unwrap_or("NVIDIA GPU").trim().to_string())
-        })
-        .unwrap_or_else(|| "NVIDIA GPU".into())
+    run_cmd_silent(
+        Command::new("wmic").args(["path", "win32_VideoController", "get", "name", "/format:csv"]),
+        5,
+    )
+    .and_then(|out| {
+        out.lines()
+            .find(|l| l.to_lowercase().contains("nvidia"))
+            .map(|l| l.split(',').nth(1).unwrap_or("NVIDIA GPU").trim().to_string())
+    })
+    .unwrap_or_else(|| "NVIDIA GPU".into())
 }
 
 #[cfg(target_os = "linux")]
@@ -247,8 +283,7 @@ fn detect_linux() -> GpuInfo {
     // 3. lspci 兜底：当 /dev/nvidia0 和 renderD* 都没有时，尝试 lspci。
     // -nn 选项同时输出设备名和 PCI vendor/device ID，便于关键词匹配。
     // 此场景通常出现在驱动未加载但硬件存在的情况（如刚安装系统）。
-    if let Ok(o) = std::process::Command::new("lspci").arg("-nn").output() {
-        let out = String::from_utf8_lossy(&o.stdout);
+    if let Some(out) = run_cmd_silent(Command::new("lspci").arg("-nn"), 5) {
         if out.contains("nvidia") {
             return GpuInfo {
                 gpu_type: GpuType::Cuda,
@@ -276,29 +311,22 @@ fn get_nvidia_vram_linux() -> Option<u64> {
     // nvidia-smi 是 NVIDIA 官方提供的管理工具，随闭源驱动一起安装。
     // --query-gpu=memory.total 精确查询显存总量；
     // --format=csv,noheader,nounits 去掉表头和单位，输出裸数字（MiB），便于直接 parse。
-    let out = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
-        .output().ok()?;
-    // 输出格式示例："8192\n"（单位 MiB），直接解析为 u64 即为 MB 近似值。
-    String::from_utf8_lossy(&out.stdout)
-        .lines().next()
-        .and_then(|l| l.trim().parse::<u64>().ok())
+    run_cmd_silent(
+        Command::new("nvidia-smi").args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"]),
+        3,
+    )
+    .and_then(|out| out.lines().next().and_then(|l| l.trim().parse::<u64>().ok()))
 }
 
 #[cfg(target_os = "linux")]
 fn get_nvidia_name_linux() -> String {
     // 同样使用 nvidia-smi 查询 GPU 名称；--format=csv,noheader 让输出只有名称字符串。
-    std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name", "--format=csv,noheader"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .next()
-                .map(|l| l.trim().to_string())
-        })
-        .unwrap_or_else(|| "NVIDIA GPU".into())
+    run_cmd_silent(
+        Command::new("nvidia-smi").args(["--query-gpu=name", "--format=csv,noheader"]),
+        3,
+    )
+    .and_then(|out| out.lines().next().map(|l| l.trim().to_string()))
+    .unwrap_or_else(|| "NVIDIA GPU".into())
 }
 
 /// 返回 GPU 加速二进制的缓存目录（{cache}/bin/）。
