@@ -45,7 +45,7 @@ pub async fn split_audio_for_asr(
     tokio::task::spawn_blocking(move || {
         let mut cmd = silent_command(&ffmpeg);
         cmd
-            .args(["-y", "-hide_banner", "-loglevel", "quiet"])
+            .args(["-y", "-hide_banner", "-loglevel", "error"])
             .arg("-i").arg(&input)
             .arg("-vn")
             .arg("-acodec").arg("pcm_s16le")
@@ -58,10 +58,11 @@ pub async fn split_audio_for_asr(
             .arg("-reset_timestamps").arg("1")
             .arg(&output_pattern)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| format!("ffmpeg 分片启动失败: {e}"))?;
         let stdout = child.stdout.take().unwrap();
+        let stderr_handle = child.stderr.take();
         let reader = BufReader::new(stdout);
 
         let mut total_us: f64 = 0.0;
@@ -90,7 +91,18 @@ pub async fn split_audio_for_asr(
 
         let status = child.wait().map_err(|e| format!("ffmpeg 等待失败: {e}"))?;
         if !status.success() {
-            return Err(format!("ffmpeg 分片返回错误: {status}"));
+            let stderr_msg = stderr_handle.map(|mut s| {
+                use std::io::Read;
+                let mut buf = String::new();
+                s.read_to_string(&mut buf).ok();
+                buf
+            }).unwrap_or_default();
+            let detail = if stderr_msg.trim().is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", stderr_msg.trim())
+            };
+            return Err(format!("ffmpeg 分片返回错误: {status}{detail}"));
         }
 
         let chunk_dir = output_pattern.parent().unwrap();

@@ -274,7 +274,9 @@ pub async fn translate_with_tencent(
     skip_cache: bool,
 ) -> Result<Vec<Segment>, String> {
     // 统一语言代码格式（腾讯 API 要求小写）
-    let src = source_lang.to_lowercase();
+    let src = source_lang
+        .to_lowercase()
+        .replace("zh-tw", "zh-TW");
     let tgt = target_lang
         .to_lowercase()
         .replace("zh-tw", "zh-TW") // 腾讯繁体中文代码使用混合大小写
