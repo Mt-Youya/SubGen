@@ -1,6 +1,9 @@
-# 语言要求
-所有回答都使用中文。无论上下文有多长都使用中文回答。这是第一优先级，整个项目的重中之重，绝对的核心。
-Output with CHINESE.
+<!-- HIGHEST PRIORITY RULE -->
+## 🔴 语言规则（最高优先级）
+**必须用简体中文回答所有问题，无例外。**
+- 代码注释可以用英文
+- 所有解释、分析、建议必须是中文
+- 即使用户用英文提问，也用中文回答
 
 # SubGen
 
@@ -127,3 +130,5 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+> ⚠️ Reminder: Always respond in Simplified Chinese.
