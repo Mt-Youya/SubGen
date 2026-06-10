@@ -236,7 +236,7 @@ export function ExtractPanel() {
     : 0;
 
   return (
-    <div className="flex flex-col gap-3 max-w-xl mx-auto w-full">
+    <div className="flex flex-col gap-3 max-w-3xl mx-auto w-full">
       <div className="rounded-md p-5 flex flex-col gap-3"
         style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}>
 
@@ -363,10 +363,19 @@ export function ExtractPanel() {
               </svg>
               <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>提取队列</span>
             </div>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-medium"
-              style={{ background: "var(--color-accent-muted)", color: "var(--color-accent)", border: "0.5px solid rgba(99,102,241,0.25)" }}>
-              {inputs.length} 个文件
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-medium"
+                style={{ background: "var(--color-accent-muted)", color: "var(--color-accent)", border: "0.5px solid rgba(99,102,241,0.25)" }}>
+                {inputs.length} 个文件
+              </span>
+              {status !== "extracting" && (
+                <button onClick={() => { setInputs([]); setInputSizes([]); setResults([]); setStatus("idle"); setError(""); }}
+                  className="text-xs px-2 py-0.5 rounded"
+                  style={{ color: "var(--color-danger)", background: "rgba(220,50,50,0.08)", border: "0.5px solid rgba(220,50,50,0.2)" }}>
+                  清空
+                </button>
+              )}
+            </div>
           </div>
           <div className="divide-y" style={{ borderColor: "var(--color-border-subtle)" }}>
             {inputs.map((f, i) => {

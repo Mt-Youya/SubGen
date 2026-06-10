@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ── 图标 ──────────────────────────────────────────────────
-function VideoIcon() {
+function FileIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14,2 14,8 20,8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <polyline points="10,9 9,9 8,9" />
     </svg>
   );
 }
@@ -17,8 +20,7 @@ interface LogEntry { time: string; message: string; stage?: string }
 function LogPanel({ logs, collapsed, onToggle }: { logs: LogEntry[]; collapsed: boolean; onToggle: () => void }) {
   if (logs.length === 0) return null;
   const stageLabels: Record<string, string> = {
-    extracting: "提取音频", loading_model: "加载模型",
-    transcribing: "语音识别", translating: "翻译字幕", saving: "保存", done: "完成",
+    parsing: "解析字幕", translating: "翻译", saving: "保存", done: "完成",
   };
   return (
     <div className="rounded-md overflow-hidden" style={{ border: "0.5px solid var(--color-border-subtle)" }}>
@@ -45,7 +47,6 @@ function LogPanel({ logs, collapsed, onToggle }: { logs: LogEntry[]; collapsed: 
                   style={{
                     background: entry.stage === "translating" ? "oklch(65% 0.15 145 / 15%)" :
                       entry.stage === "done" ? "var(--color-accent-muted)" :
-                      entry.stage === "transcribing" ? "oklch(65% 0.15 260 / 12%)" :
                       "var(--color-surface-3)",
                     color: entry.stage === "translating" ? "oklch(65% 0.15 145)" :
                       entry.stage === "done" ? "var(--color-accent)" :
@@ -97,7 +98,7 @@ function DownloadChip({ title, subtitle, onClick }: {
 
 // ── 字幕预览 ──────────────────────────────────────────────
 function SubtitlePreview({ result, sourceLang, targetLang }: {
-  result: GenerateResult; sourceLang: string; targetLang: string;
+  result: TranslateResult; sourceLang: string; targetLang: string;
 }) {
   const [tab, setTab] = useState<"original" | "translated" | "bilingual">("translated");
   const [collapsed, setCollapsed] = useState(true);
@@ -109,7 +110,6 @@ function SubtitlePreview({ result, sourceLang, targetLang }: {
 
   return (
     <div className="rounded-md overflow-hidden" style={{ border: "0.5px solid var(--color-border-subtle)" }}>
-      {/* 可点击 header */}
       <div className="px-4 py-2.5 flex items-center cursor-pointer select-none"
         style={{ background: "var(--color-surface-2)", borderBottom: collapsed ? "none" : "0.5px solid var(--color-border-subtle)" }}
         onClick={() => setCollapsed(c => !c)}>
@@ -134,7 +134,6 @@ function SubtitlePreview({ result, sourceLang, targetLang }: {
           <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </div>
-      {/* 内容区 */}
       {!collapsed && (
         <div className="overflow-y-auto divide-y" style={{ maxHeight: "220px", background: "var(--color-surface-1)", borderColor: "var(--color-border-subtle)" } as React.CSSProperties}>
           {items.slice(0, 20).map((item, i) => (
@@ -157,27 +156,26 @@ function SubtitlePreview({ result, sourceLang, targetLang }: {
   );
 }
 
-type AsrProvider = "groq" | "siliconflow" | "local-whisper";
 type TranslateProvider = "deepl" | "tencent";
 
 interface ProgressPayload { stage: string; ratio: number; message: string; elapsed_secs?: number; stage_elapsed_secs?: number }
 
 const PIPELINE_STEPS = [
-  { key: "extracting",    label: "提取音频", icon: "⚙" },
-  { key: "loading_model", label: "加载模型", icon: "⬇" },
-  { key: "transcribing",  label: "语音识别", icon: "◎" },
-  { key: "translating",   label: "翻译字幕", icon: "↔" },
-  { key: "done",          label: "完成",     icon: "✓" },
+  { key: "parsing",    label: "解析字幕", icon: "↓" },
+  { key: "translating", label: "翻译",    icon: "↔" },
+  { key: "done",        label: "完成",    icon: "✓" },
 ] as const;
 
 function stageToStepIdx(stage: string): number {
-  if (stage === "done") return PIPELINE_STEPS.length - 1;
-  const idx = PIPELINE_STEPS.findIndex(s => s.key === stage);
-  return idx === -1 ? 0 : idx;
+  switch (stage) {
+    case "done": return 2;
+    case "translating": return 1;
+    default: return 0; // parsing → 解析字幕
+  }
 }
 
 interface Segment { start: number; end: number; text: string }
-interface GenerateResult {
+interface TranslateResult {
   segments: Segment[];
   translated: Segment[];
   originalSrt: string;
@@ -187,40 +185,22 @@ interface GenerateResult {
   translatedPath: string;
   bilingualPath: string | null;
 }
-type WhisperModel = "base" | "small" | "medium" | "large-v3";
 
 interface Settings {
-  asrProvider: AsrProvider;
   translateProvider: TranslateProvider;
-  groqApiKey: string;
-  siliconflowApiKey: string;
   deeplApiKey: string;
   tencentSecretId: string;
   tencentSecretKey: string;
-  chunkSeconds: number;
   skipCache: boolean;
-  whisperModel: WhisperModel;
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  asrProvider: "local-whisper",
   translateProvider: "tencent",
-  groqApiKey: "",
-  siliconflowApiKey: "",
   deeplApiKey: "",
   tencentSecretId: "",
   tencentSecretKey: "",
-  chunkSeconds: 240,
   skipCache: false,
-  whisperModel: "small",
 };
-
-const WHISPER_MODELS: { name: WhisperModel; label: string; size: string; desc: string }[] = [
-  { name: "base",     label: "Base",     size: "142MB", desc: "速度最快，适合简单内容" },
-  { name: "small",    label: "Small",    size: "466MB", desc: "推荐，速度与精度平衡" },
-  { name: "medium",   label: "Medium",   size: "1.5GB", desc: "高精度，适合复杂语音" },
-  { name: "large-v3", label: "Large v3", size: "3.1GB", desc: "最高精度，需要更多内存" },
-];
 
 const SOURCE_LANGS = [
   { code: "auto", label: "🌐 自动检测" },
@@ -268,17 +248,13 @@ function hasTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-function settingsComplete(s: Settings, modelReady: boolean, downloadedModels?: Set<WhisperModel>): boolean {
-  const asrOk = s.asrProvider === "local-whisper"
-    ? (downloadedModels ? downloadedModels.has(s.whisperModel) : modelReady)
-    : s.asrProvider === "groq" ? !!s.groqApiKey.trim() : !!s.siliconflowApiKey.trim();
-  const trlOk = s.translateProvider === "tencent"
+function settingsComplete(s: Settings): boolean {
+  return s.translateProvider === "tencent"
     ? !!(s.tencentSecretId.trim() && s.tencentSecretKey.trim())
     : !!s.deeplApiKey.trim();
-  return asrOk && trlOk;
 }
 
-function toCamelResult(raw: Record<string, unknown>): GenerateResult {
+function toCamelResult(raw: Record<string, unknown>): TranslateResult {
   return {
     segments: (raw.segments as Segment[]) ?? [],
     translated: (raw.translated as Segment[]) ?? [],
@@ -334,143 +310,6 @@ function CustomSelect<T extends string>({ value, onChange, options }: {
   );
 }
 
-// ── 模型选择下拉 ──────────────────────────────────────────
-function ModelSelect({ value, onChange, downloadedModels, downloadingModel, downloadProgress, onDownload, onDelete }: {
-  value: WhisperModel;
-  onChange: (v: WhisperModel) => void;
-  downloadedModels: Set<WhisperModel>;
-  downloadingModel: WhisperModel | null;
-  downloadProgress: Record<string, number>;
-  onDownload: (m: WhisperModel) => void;
-  onDelete: (m: WhisperModel) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const selected = WHISPER_MODELS.find(m => m.name === value);
-  const downloadingInfo = downloadingModel ? WHISPER_MODELS.find(m => m.name === downloadingModel) : null;
-  const downloadingPct = downloadingModel ? Math.round((downloadProgress[downloadingModel] ?? 0) * 100) : 0;
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative w-full">
-      <button type="button" onClick={() => setOpen(o => !o)}
-        className="w-full relative overflow-hidden flex items-center justify-between rounded-md px-3 py-2 text-sm text-left"
-        style={{ background: "var(--color-surface-2)", border: `1px solid ${downloadingInfo && !open ? "var(--color-accent)" : "var(--color-border)"}`, color: "var(--color-text-primary)" }}>
-        {downloadingInfo && !open && (
-          <div className="absolute inset-0 pointer-events-none"
-            style={{ transform: `scaleX(${downloadingPct / 100})`, transformOrigin: "left", transition: "transform 0.3s ease-out", background: "var(--color-accent)" }} />
-        )}
-        <span className="relative flex items-center gap-2">
-          <span style={{ color: downloadingInfo && !open ? "var(--color-text-primary)" : "var(--color-text-primary)" }}>{selected?.label}</span>
-          <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{selected?.size}</span>
-          {downloadedModels.has(value) && <span className="text-xs" style={{ color: "var(--color-success)" }}>✓</span>}
-          {downloadingInfo && !open && (
-            <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>
-              (下载中 {downloadingPct}%)
-            </span>
-          )}
-        </span>
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
-          style={{ color: "var(--color-text-tertiary)", transform: open ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.15s", flexShrink: 0 }}>
-          <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-md"
-          style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border)", boxShadow: "0 8px 24px oklch(0% 0 0 / 40%)", overflow: "hidden" }}>
-            <div className="flex items-center justify-between px-3 py-1.5"
-              style={{ borderBottom: "0.5px solid var(--color-border)" }}>
-              <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>Whisper 模型</span>
-              <button type="button"
-                onClick={async e => {
-                  e.stopPropagation();
-                  try {
-                    const { invoke } = await import("@tauri-apps/api/core");
-                    const dir = await invoke<string>("get_models_dir");
-                    await invoke("reveal_in_finder", { path: dir });
-                  } catch (err) { alert(`打开失败: ${err}`); }
-                }}
-                className="rounded px-1.5 py-0.5 text-xs"
-                style={{ color: "var(--color-accent)" }}>
-                打开目录
-              </button>
-            </div>
-            {WHISPER_MODELS.map((m) => {
-            const downloaded = downloadedModels.has(m.name);
-            const isDownloading = downloadingModel === m.name;
-            const pct = Math.round((downloadProgress[m.name] ?? 0) * 100);
-            const isSelected = m.name === value;
-            return (
-              <div key={m.name} className="relative">
-                {isDownloading && (
-                  <div className="absolute inset-0 pointer-events-none transition-all duration-300"
-                    style={{
-                      width: `${pct}%`,
-                      background: "var(--color-accent-muted)",
-                    }} />
-                )}
-                <div className="relative flex items-center justify-between px-3 py-2">
-                  {downloaded ? (
-                    <button type="button"
-                      onClick={() => { onChange(m.name); setOpen(false); }}
-                      className="flex flex-col gap-0.5 flex-1 text-left min-w-0"
-                      style={{ cursor: "pointer" }}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium" style={{ color: isSelected ? "var(--color-accent)" : "var(--color-text-primary)" }}>{m.label}</span>
-                        <span className="text-xs" style={{ color: "var(--color-text-tertiary)", fontFamily: "JetBrains Mono, monospace" }}>{m.size}</span>
-                        {isDownloading && <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{pct}%</span>}
-                      </div>
-                      <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{m.desc}</span>
-                    </button>
-                  ) : (
-                    <div className="flex flex-col gap-0.5 flex-1 text-left min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium" style={{ color: "var(--color-text-tertiary)" }}>{m.label}</span>
-                        <span className="text-xs" style={{ color: "var(--color-text-tertiary)", fontFamily: "JetBrains Mono, monospace" }}>{m.size}</span>
-                        {isDownloading && <span className="text-xs tabular-nums" style={{ color: "var(--color-accent)" }}>{pct}%</span>}
-                      </div>
-                      <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{m.desc}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-1 shrink-0 ml-2">
-                    {downloaded && !isDownloading && (
-                      <>
-                        <span className="text-xs" style={{ color: "var(--color-success)" }}>✓</span>
-                        <button type="button" onClick={e => { e.stopPropagation(); onDelete(m.name); }}
-                          className="p-1 rounded transition-opacity opacity-40 hover:opacity-100"
-                          style={{ color: "var(--color-text-tertiary)" }} title="删除模型">
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                            <path d="M2 3h8M5 3V2h2v1M4.5 3l.5 6h2l.5-6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
-                      </>
-                    )}
-                    {!downloaded && (
-                      <button type="button" onClick={e => { e.stopPropagation(); onDownload(m.name); }}
-                        disabled={!!downloadingModel}
-                        className="rounded-full px-2.5 py-0.5 text-xs font-medium transition-opacity disabled:opacity-40"
-                        style={{ background: "var(--color-accent)", color: "white" }}>
-                        {isDownloading ? "下载中" : "下载"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function formatBytes(b: number) {
   if (b >= 1073741824) return (b / 1073741824).toFixed(1) + " GB";
   if (b >= 1048576)    return (b / 1048576).toFixed(1) + " MB";
@@ -478,14 +317,12 @@ function formatBytes(b: number) {
   return b + " B";
 }
 
-// ── 设置分组标题 ──────────────────────────────────────────
 function SettingGroup({ label }: { label: string }) {
   return (
     <p className="text-sm font-semibold pt-1" style={{ color: "var(--color-text-secondary)" }}>{label}</p>
   );
 }
 
-// label + 控件同行
 function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3">
@@ -501,21 +338,21 @@ interface FileTask {
   status: "pending" | "processing" | "done" | "error";
   progress: ProgressPayload;
   displayRatio: number;
-  result: GenerateResult | null;
+  result: TranslateResult | null;
   error: string;
   totalElapsed?: number;
   stageTiming: Record<string, number>;
   logs: LogEntry[];
 }
 
-const MEDIA_EXTS = ["mp4", "mkv", "ts", "m2ts", "webm", "avi", "mov", "wmv", "flv", "mp3", "wav", "m4a", "aac"];
+const SUB_EXTS = ["srt", "txt", "ass", "ssa", "vtt"];
 
 // ── 主组件 ────────────────────────────────────────────────
-export function DesktopSubtitlePanel() {
+export function TranslatePanel() {
   const [outputDir, setOutputDir] = useState("");
   const [sourceLang, setSourceLang] = useState("ja");
   const [targetLang, setTargetLang] = useState("ZH");
-  const [bilingual, setBilingual] = useState(false);
+  const [bilingual, setBilingual] = useState(true);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [isTauri, setIsTauri] = useState(false);
   const [tasks, setTasks] = useState<FileTask[]>([]);
@@ -524,137 +361,43 @@ export function DesktopSubtitlePanel() {
   const [isRunning, setIsRunning] = useState(false);
   const targetRatioRef = useRef<Record<string, number>>({});
   const rafRef = useRef<number>(0);
-  const currentTaskRef = useRef<string>("");
   const abortRef = useRef<AbortController | null>(null);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [modelReady, setModelReady] = useState(false);
-  const [downloadingModel, setDownloadingModel] = useState<WhisperModel | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
-  const [downloadedModels, setDownloadedModels] = useState<Set<WhisperModel>>(new Set());
-  const [gpuStatus, setGpuStatus] = useState<{
-    detected: { gpu_type: string; name: string; available: boolean };
-    active_variant: string;
-    active_is_gpu: boolean;
-    recommended: string;
-    recommended_downloaded: boolean;
-    download_url: string;
-  } | null>(null);
-  const [gpuDownloading, setGpuDownloading] = useState(false);
-  const [concurrency, setConcurrency] = useState(1);
   const [queueStartTime, setQueueStartTime] = useState<number | null>(null);
   const [queueElapsed, setQueueElapsed] = useState<number | null>(null);
   const initialized = useRef(false);
-
-  const whisperModelRef = useRef(settings.whisperModel);
-  useEffect(() => { whisperModelRef.current = settings.whisperModel; }, [settings.whisperModel]);
-
-  const checkModel = useCallback(async () => {
-    if (!hasTauriRuntime()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    const info = await invoke<{
-      whisper: boolean; model: boolean;
-      models: { name: WhisperModel; downloaded: boolean }[];
-    }>("check_whisper_model", { model: whisperModelRef.current })
-      .catch(() => ({ whisper: false, model: false, models: [] }));
-    setModelReady(info.model && info.whisper);
-    setDownloadedModels(new Set(info.models.filter(m => m.downloaded).map(m => m.name)));
-  }, []);
-
-  const downloadModel = useCallback(async (modelName: WhisperModel) => {
-    setDownloadingModel(modelName);
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("download_whisper_model", { model: modelName });
-      setDownloadedModels(prev => new Set([...prev, modelName]));
-      if (modelName === settings.whisperModel) setModelReady(true);
-    } catch (e) {
-      alert(`模型下载失败: ${e}`);
-    } finally {
-      setDownloadingModel(null);
-      setDownloadProgress(prev => { const next = { ...prev }; delete next[modelName]; return next; });
-    }
-  }, [settings.whisperModel]);
-
-  const deleteModel = useCallback(async (modelName: WhisperModel) => {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("delete_whisper_model", { model: modelName });
-      setDownloadedModels(prev => { const next = new Set(prev); next.delete(modelName); return next; });
-      if (modelName === settings.whisperModel) setModelReady(false);
-    } catch (e) {
-      alert(`删除失败: ${e}`);
-    }
-  }, [settings.whisperModel]);
 
   useEffect(() => {
     setIsTauri(hasTauriRuntime());
     const saved = window.localStorage.getItem("subgen-desktop-settings");
     if (saved) {
       try {
-        const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
-        setSettings(parsed);
-        setSettingsOpen(!settingsComplete(parsed, true));
+        const parsed = JSON.parse(saved);
+        setSettings({
+          translateProvider: parsed.translateProvider ?? DEFAULT_SETTINGS.translateProvider,
+          deeplApiKey: parsed.deeplApiKey ?? "",
+          tencentSecretId: parsed.tencentSecretId ?? "",
+          tencentSecretKey: parsed.tencentSecretKey ?? "",
+          skipCache: parsed.skipCache ?? false,
+        });
+        setSettingsOpen(!settingsComplete(parsed));
       } catch {
-        window.localStorage.removeItem("subgen-desktop-settings");
         setSettingsOpen(true);
       }
     } else {
       setSettingsOpen(true);
     }
     initialized.current = true;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => { if (isTauri) checkModel(); }, [isTauri, checkModel]);
-  useEffect(() => { if (isTauri) checkModel(); }, [settings.whisperModel]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 获取 GPU 状态 + 并发数
-  useEffect(() => {
-    if (!isTauri) return;
-    import("@tauri-apps/api/core").then(({ invoke }) => {
-      invoke<{
-        detected: { gpu_type: string; name: string; available: boolean };
-        active_variant: string;
-        active_is_gpu: boolean;
-        recommended: string;
-        recommended_downloaded: boolean;
-        download_url: string;
-      }>("get_gpu_status").then(s => setGpuStatus(s)).catch(() => null);
-      invoke<{ concurrency: number; gpu: boolean; vram_mb: number | null; gpu_name: string }>(
-        "get_concurrency", { model: settings.whisperModel }
-      ).then(r => setConcurrency(r.concurrency)).catch(() => null);
-    });
-  }, [isTauri]);
-
-  // 模型切换时刷新并发数
-  useEffect(() => {
-    if (!isTauri) return;
-    import("@tauri-apps/api/core").then(({ invoke }) => {
-      invoke<{ concurrency: number }>("get_concurrency", { model: settings.whisperModel })
-        .then(r => setConcurrency(r.concurrency)).catch(() => null);
-    });
-  }, [isTauri, settings.whisperModel]);
-
-  const downloadGpuWhisper = useCallback(async () => {
-    setGpuDownloading(true);
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("download_gpu_whisper");
-      // 重新检查 GPU 状态
-      const s = await invoke<typeof gpuStatus>("get_gpu_status");
-      setGpuStatus(s);
-    } catch (e) {
-      alert(`GPU 加速版下载失败: ${e}`);
-    } finally {
-      setGpuDownloading(false);
-    }
   }, []);
 
   useEffect(() => {
     if (!initialized.current) return;
-    window.localStorage.setItem("subgen-desktop-settings", JSON.stringify(settings));
+    // 与字幕生成 Tab 共享设置，读取完整配置后合并写回
+    const saved = window.localStorage.getItem("subgen-desktop-settings");
+    const base = saved ? JSON.parse(saved) : {};
+    window.localStorage.setItem("subgen-desktop-settings", JSON.stringify({ ...base, ...settings }));
   }, [settings]);
 
   useEffect(() => {
@@ -683,38 +426,6 @@ export function DesktopSubtitlePanel() {
           }
           return { ...t, progress: e.payload, stageTiming, logs: [...t.logs, logEntry] };
         }));
-      }))
-      .then(u => { if (disposed) u(); else off = u; })
-      .catch(() => { });
-    return () => { disposed = true; off?.(); };
-  }, [isTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    let off: (() => void) | undefined;
-    let disposed = false;
-    import("@tauri-apps/api/event")
-      .then(({ listen }) => listen<{ model: string; ratio: number }>("model-download-progress", e => {
-        setDownloadProgress(prev => ({ ...prev, [e.payload.model]: e.payload.ratio }));
-      }))
-      .then(u => { if (disposed) u(); else off = u; })
-      .catch(() => { });
-    return () => { disposed = true; off?.(); };
-  }, [isTauri]);
-
-  useEffect(() => {
-    if (!isTauri) return;
-    let off: (() => void) | undefined;
-    let disposed = false;
-    import("@tauri-apps/api/event")
-      .then(({ listen }) => listen<{ variant: string; ratio: number; message: string; url: string }>("gpu-download-progress", e => {
-        if (e.payload.ratio >= 1.0) {
-          setGpuDownloading(false);
-          // 刷新 GPU 状态
-          import("@tauri-apps/api/core").then(({ invoke }) =>
-            invoke<typeof gpuStatus>("get_gpu_status").then(s => setGpuStatus(s))
-          );
-        }
       }))
       .then(u => { if (disposed) u(); else off = u; })
       .catch(() => { });
@@ -773,7 +484,7 @@ export function DesktopSubtitlePanel() {
   const pickInputs = useCallback(async () => {
     if (!isTauri) return;
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const sel = await open({ multiple: true, filters: [{ name: "媒体文件", extensions: MEDIA_EXTS }] });
+    const sel = await open({ multiple: true, filters: [{ name: "字幕文件", extensions: SUB_EXTS }] });
     if (!sel) return;
     await addPaths(Array.isArray(sel) ? sel : [sel]);
   }, [isTauri, addPaths]);
@@ -786,7 +497,7 @@ export function DesktopSubtitlePanel() {
     const dirs = Array.isArray(sel) ? sel : [sel];
     const { readDir } = await import("@tauri-apps/plugin-fs");
     const { join } = await import("@tauri-apps/api/path");
-    const extSet = new Set(MEDIA_EXTS);
+    const extSet = new Set(SUB_EXTS);
     async function collectFiles(dir: string): Promise<string[]> {
       try {
         const entries = await readDir(dir);
@@ -820,8 +531,8 @@ export function DesktopSubtitlePanel() {
   }, []);
 
   const canSubmit = useMemo(() =>
-    isTauri && tasks.length > 0 && !!outputDir && !isRunning && settingsComplete(settings, modelReady, downloadedModels),
-    [isTauri, tasks, outputDir, isRunning, settings, modelReady, downloadedModels]);
+    isTauri && tasks.length > 0 && !!outputDir && !isRunning && settingsComplete(settings),
+    [isTauri, tasks, outputDir, isRunning, settings]);
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return;
@@ -831,19 +542,15 @@ export function DesktopSubtitlePanel() {
     setQueueStartTime(queueStart);
     const abort = new AbortController();
     abortRef.current = abort;
-    const { invoke } = await import("@tauri-apps/api/core");
 
     const pending = tasks.filter(t => t.status !== "done");
-    // 并发池：同时最多 concurrency 个任务
-    const sem = { count: 0, max: concurrency };
-    const runTask = async (task: FileTask) => {
+    for (const task of pending) {
       if (abort.signal.aborted) {
         setTasks(prev => prev.map(t =>
           t.path === task.path ? { ...t, status: "error", error: "已停止" } : t
         ));
-        return;
+        continue;
       }
-      currentTaskRef.current = task.path;
       targetRatioRef.current[task.path] = 0;
       const taskStart = Date.now();
       setTasks(prev => prev.map(t =>
@@ -851,20 +558,16 @@ export function DesktopSubtitlePanel() {
           progress: { stage: "starting", ratio: 0, message: "启动中..." } } : t
       ));
       try {
-        const raw = await invoke<Record<string, unknown>>("generate_subtitles", {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const raw = await invoke<Record<string, unknown>>("translate_file", {
           opts: {
             input: task.path, output_dir: outputDir,
             source_lang: sourceLang, target_lang: targetLang, bilingual,
-            asr_provider: settings.asrProvider,
             translate_provider: settings.translateProvider,
-            groq_api_key: settings.groqApiKey || null,
-            siliconflow_api_key: settings.siliconflowApiKey || null,
             deepl_api_key: settings.deeplApiKey || null,
             tencent_secret_id: settings.tencentSecretId || null,
             tencent_secret_key: settings.tencentSecretKey || null,
-            chunk_seconds: settings.chunkSeconds,
             skip_cache: settings.skipCache,
-            whisper_model: settings.whisperModel,
           },
         });
         if (abort.signal.aborted) return;
@@ -881,48 +584,17 @@ export function DesktopSubtitlePanel() {
           t.path === task.path ? { ...t, status: "error", error: String(e) } : t
         ));
       }
-    };
-
-    // 并发调度
-    await new Promise<void>(resolve => {
-      let started = 0, finished = 0;
-      function next() {
-        while (sem.count < sem.max && started < pending.length) {
-          const task = pending[started++];
-          sem.count++;
-          runTask(task).finally(() => {
-            sem.count--;
-            finished++;
-            if (finished === pending.length) resolve();
-            else next();
-          });
-        }
-      }
-      next();
-      if (pending.length === 0) resolve();
-    });
+    }
 
     const totalQueueElapsed = (Date.now() - queueStart) / 1000;
     setQueueElapsed(totalQueueElapsed);
     setQueueStartTime(null);
     abortRef.current = null;
     setIsRunning(false);
-    currentTaskRef.current = "";
-  }, [canSubmit, tasks, concurrency, outputDir, sourceLang, targetLang, bilingual, settings]);
+  }, [canSubmit, tasks, outputDir, sourceLang, targetLang, bilingual, settings]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
-    // 通知 Rust 端取消所有正在处理的任务
-    import("@tauri-apps/api/core").then(({ invoke }) => {
-      setTasks(prev => {
-        for (const t of prev) {
-          if (t.status === "processing") {
-            invoke("cancel_subtitle", { input: t.path }).catch(() => {});
-          }
-        }
-        return prev;
-      });
-    });
   }, []);
 
   const handleRetry = useCallback(async (path: string) => {
@@ -940,7 +612,7 @@ export function DesktopSubtitlePanel() {
       <div className="rounded-md p-5 flex flex-col gap-4"
         style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}>
 
-        {/* 媒体文件 */}
+        {/* 字幕文件 */}
         {tasks.length === 0 ? (
           <div
             className="rounded-md transition-all duration-200"
@@ -957,15 +629,17 @@ export function DesktopSubtitlePanel() {
             <div className="flex flex-col items-center gap-3 text-center">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"
                 style={{ color: isDragging ? "var(--color-accent)" : "var(--color-text-tertiary)" }}>
-                <rect x="2" y="4" width="20" height="16" rx="3" />
-                <path d="m10 9 5 3-5 3V9Z" />
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14,2 14,8 20,8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
               </svg>
               <div>
                 <p className="text-sm font-medium" style={{ color: isDragging ? "var(--color-accent)" : "var(--color-text-primary)" }}>
-                  {isDragging ? "松开即可添加" : "拖放视频或音频文件"}
+                  {isDragging ? "松开即可添加" : "拖放字幕文件"}
                 </p>
                 <p className="text-xs mt-1" style={{ color: "var(--color-text-tertiary)" }}>
-                  支持多文件、文件夹递归扫描
+                  支持 SRT / ASS / VTT / TXT，支持文件夹批量导入
                 </p>
               </div>
               {!isDragging && (
@@ -983,7 +657,7 @@ export function DesktopSubtitlePanel() {
                 </div>
               )}
               <div className="flex items-center gap-1.5 flex-wrap justify-center mt-1">
-                {["MP4","MKV","MOV","AVI","MP3","WAV","M4A","AAC"].map(fmt => (
+                {["SRT","ASS","VTT","TXT"].map(fmt => (
                   <span key={fmt} className="px-1.5 py-0.5 rounded text-[10px]"
                     style={{ background: "var(--color-surface-3)", color: "var(--color-text-tertiary)", border: "0.5px solid var(--color-border-subtle)", fontFamily: "JetBrains Mono, monospace" }}>
                     {fmt}
@@ -994,7 +668,7 @@ export function DesktopSubtitlePanel() {
           </div>
         ) : (
           <div className="flex flex-col gap-1.5">
-            <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>媒体文件</p>
+            <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>字幕文件</p>
             <div className="flex gap-2">
               <button onClick={pickInputs}
                 className="flex-1 min-w-0 rounded-md px-3 py-2 text-sm text-left truncate"
@@ -1061,7 +735,7 @@ export function DesktopSubtitlePanel() {
             style={{ background: "var(--color-accent)", color: "white" }}
             onMouseEnter={e => { if (!isRunning) (e.currentTarget as HTMLElement).style.background = "var(--color-accent-hover)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--color-accent)"; }}>
-            {isRunning ? `生成中 (${tasks.filter(t => t.status === "done").length}/${tasks.length})...` : "开始生成字幕"}
+            {isRunning ? `翻译中 (${tasks.filter(t => t.status === "done").length}/${tasks.length})...` : "开始翻译"}
           </button>
           {isRunning && (
             <button onClick={handleStop}
@@ -1084,7 +758,7 @@ export function DesktopSubtitlePanel() {
             style={{ background: "var(--color-accent-muted)", border: "0.5px solid rgba(99,102,241,0.25)" }}>
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--color-accent)" }} />
-              <span className="text-sm" style={{ color: "var(--color-accent)" }}>批量完成</span>
+              <span className="text-sm" style={{ color: "var(--color-accent)" }}>翻译完成</span>
             </div>
             <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
               {doneTasks.length} 个文件 · {totalSegments} 条字幕
@@ -1098,16 +772,14 @@ export function DesktopSubtitlePanel() {
       {tasks.length > 0 && (
         <div className="rounded-md overflow-hidden"
           style={{ background: "var(--color-surface-1)", border: "0.5px solid var(--color-border-subtle)" }}>
-          {/* header */}
           <div className="px-4 py-2.5 flex items-center justify-between"
             style={{ borderBottom: "0.5px solid var(--color-border-subtle)" }}>
             <div className="flex items-center gap-2">
-              {/* 活动波形图标 */}
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                 style={{ color: "var(--color-accent)", flexShrink: 0 }}>
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
               </svg>
-              <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>处理队列</span>
+              <span className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>翻译队列</span>
             </div>
             <div className="flex items-center gap-2">
               {queueElapsed != null && (
@@ -1146,12 +818,9 @@ export function DesktopSubtitlePanel() {
 
               return (
                 <div key={task.path} style={{ borderColor: "var(--color-border-subtle)" }}>
-                  {/* 文件行 */}
                   <div className="px-4 py-3 flex items-center gap-3"
                     style={{ background: task.status === "processing" ? "var(--color-surface-2)" : "transparent" }}>
-                    {/* 序号 */}
                     <span style={{ fontSize: "11px", fontFamily: "JetBrains Mono, monospace", color: "var(--color-text-tertiary)", width: "18px", flexShrink: 0 }}>{taskIdx + 1}.</span>
-                    {/* 状态图标 */}
                     <div className="shrink-0 w-8 h-8 rounded-md flex items-center justify-center"
                       style={{ background: "var(--color-surface-2)", color: "var(--color-text-secondary)" }}>
                       {task.status === "processing" ? (
@@ -1165,11 +834,10 @@ export function DesktopSubtitlePanel() {
                       ) : task.status === "error" ? (
                         <span style={{ color: "var(--color-danger)" }}>✗</span>
                       ) : (
-                        <VideoIcon />
+                        <FileIcon />
                       )}
                     </div>
 
-                    {/* 文件名 */}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate" style={{ color: "var(--color-text-primary)", fontFamily: "JetBrains Mono, monospace", fontSize: "13px" }}>
                         {basename(task.path)}
@@ -1181,7 +849,6 @@ export function DesktopSubtitlePanel() {
                       )}
                     </div>
 
-                    {/* 右侧 */}
                     <div className="flex items-center gap-2 shrink-0">
                       {task.status === "done" && task.totalElapsed != null && (
                         <span className="text-xs tabular-nums" style={{ color: "var(--color-text-tertiary)" }}>
@@ -1218,14 +885,18 @@ export function DesktopSubtitlePanel() {
                     const activeStepIdx = stageToStepIdx(task.progress.stage);
                     const pct = Math.round(task.displayRatio * 100);
                     return (
+                      <>
                       <div className="px-4 pb-3 space-y-2.5"
                         style={{ borderTop: "1px solid var(--color-border-subtle)", background: "var(--color-surface-2)" }}>
-                        {/* 步骤条 */}
                         <div className="flex items-center pt-2.5">
                           {PIPELINE_STEPS.map((s, i) => {
                             const isDone = i < activeStepIdx;
                             const isActive = i === activeStepIdx;
-                            const stepElapsed = task.stageTiming[s.key];
+                            const stepElapsed = (() => {
+                              if (i === 0) return task.stageTiming["parsing"];
+                              if (i === 1) return task.stageTiming["translating"];
+                              return task.stageTiming["done"];
+                            })();
                             return (
                               <div key={s.key} className="flex items-center flex-1 last:flex-none">
                                 <div className="flex flex-col items-center gap-0.5 shrink-0">
@@ -1255,7 +926,6 @@ export function DesktopSubtitlePanel() {
                             );
                           })}
                         </div>
-                        {/* 进度条 + 消息 */}
                         <div className="space-y-1">
                           <div className="flex justify-between items-center text-xs">
                             <span style={{ color: "var(--color-text-secondary)" }}>
@@ -1274,11 +944,10 @@ export function DesktopSubtitlePanel() {
                           </div>
                         </div>
                       </div>
+                      <LogPanel logs={task.logs} collapsed={logCollapsed} onToggle={toggleLog} />
+                      </>
                     );
                   })()}
-                  {task.status === "processing" && (
-                    <LogPanel logs={task.logs} collapsed={logCollapsed} onToggle={toggleLog} />
-                  )}
 
                   {/* 错误详情（展开） */}
                   {task.status === "error" && isExpanded && (
@@ -1289,17 +958,11 @@ export function DesktopSubtitlePanel() {
                         {task.error}
                       </pre>
                       {task.error.includes("API") || task.error.includes("Key") || task.error.includes("密钥") ? (
-                        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                          提示：请检查设置中的 API Key 是否正确
-                        </p>
-                      ) : task.error.includes("模型") || task.error.includes("model") ? (
-                        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                          提示：请在设置中下载所需 Whisper 模型
-                        </p>
-                      ) : task.error.includes("网络") || task.error.includes("network") || task.error.includes("fetch") ? (
-                        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                          提示：请检查网络连接后重试
-                        </p>
+                        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>提示：请检查设置中的 API Key 是否正确</p>
+                      ) : task.error.includes("SRT") || task.error.includes("解析") ? (
+                        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>提示：请确认文件为标准 SRT 字幕格式</p>
+                      ) : task.error.includes("网络") || task.error.includes("fetch") ? (
+                        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>提示：请检查网络连接后重试</p>
                       ) : null}
                       <LogPanel logs={task.logs} collapsed={logCollapsed} onToggle={toggleLog} />
                     </div>
@@ -1308,14 +971,24 @@ export function DesktopSubtitlePanel() {
                   {/* 完成结果（展开） */}
                   {task.status === "done" && task.result && isExpanded && (
                     <div className="px-4 pb-3 space-y-2" style={{ borderTop: "1px solid var(--color-border-subtle)" }}>
-                      {/* 阶段耗时 */}
                       {Object.keys(task.stageTiming).length > 0 && (
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-2">
-                          {PIPELINE_STEPS.filter(s => task.stageTiming[s.key] != null).map(s => (
-                            <span key={s.key} className="text-[11px] tabular-nums" style={{ color: "var(--color-text-tertiary)" }}>
-                              {s.label} <span style={{ color: "var(--color-accent)" }}>{task.stageTiming[s.key]!.toFixed(1)}s</span>
-                            </span>
-                          ))}
+                          {PIPELINE_STEPS.filter(s => {
+                            if (s.key === "parsing") return task.stageTiming["parsing"] != null;
+                            if (s.key === "translating") return task.stageTiming["translating"] != null;
+                            return task.stageTiming[s.key] != null;
+                          }).map(s => {
+                            const elapsed = s.key === "parsing"
+                              ? task.stageTiming["parsing"]
+                              : s.key === "translating"
+                              ? task.stageTiming["translating"]
+                              : task.stageTiming["done"];
+                            return (
+                              <span key={s.key} className="text-[11px] tabular-nums" style={{ color: "var(--color-text-tertiary)" }}>
+                                {s.label} <span style={{ color: "var(--color-accent)" }}>{elapsed!.toFixed(1)}s</span>
+                              </span>
+                            );
+                          })}
                         </div>
                       )}
                       <div className="flex gap-1.5 p-1 rounded-md">
@@ -1357,7 +1030,7 @@ export function DesktopSubtitlePanel() {
 
         <button onClick={() => setSettingsOpen(o => !o)}
           className="w-full flex items-center justify-between px-5 py-3.5">
-          <span className="text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>设置</span>
+          <span className="text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>翻译设置</span>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
             style={{ color: "var(--color-text-tertiary)", transform: settingsOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.2s" }}>
             <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -1368,178 +1041,14 @@ export function DesktopSubtitlePanel() {
           <div className="px-5 pb-5 flex flex-col gap-4"
             style={{ borderTop: "1px solid var(--color-border-subtle)" }}>
 
-            {/* ── 转录 ── */}
             <div className="flex flex-col gap-2.5 pt-4">
               <div className="flex items-baseline justify-between">
-                <SettingGroup label="转录" />
-                <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                  {settings.asrProvider === "local-whisper" ? "离线，无需网络" : "云端 API，速度更快"}
-                </span>
-              </div>
-              <SettingRow label="引擎">
-                <CustomSelect value={settings.asrProvider} onChange={v => set("asrProvider", v as AsrProvider)}
-                  options={[
-                    { code: "local-whisper", label: "本地 Whisper（离线）" },
-                    { code: "groq",          label: "Groq Whisper（云端）" },
-                    { code: "siliconflow",   label: "SiliconFlow（云端）" },
-                  ]} />
-              </SettingRow>
-              {settings.asrProvider === "local-whisper" && (
-                <SettingRow label="模型">
-                  <ModelSelect
-                    value={settings.whisperModel}
-                    onChange={v => set("whisperModel", v)}
-                    downloadedModels={downloadedModels}
-                    downloadingModel={downloadingModel}
-                    downloadProgress={downloadProgress}
-                    onDownload={downloadModel}
-                    onDelete={deleteModel}
-                  />
-                </SettingRow>
-              )}
-              {settings.asrProvider === "local-whisper" && gpuStatus && (
-                <>
-                <SettingRow label="GPU 加速">
-                  {gpuStatus.active_is_gpu ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                        {gpuStatus.detected.name} ({gpuStatus.active_variant.toUpperCase()}) ✓ 已启用
-                      </span>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const { invoke } = await import("@tauri-apps/api/core");
-                            const dir = await invoke<string>("get_gpu_bin_dir");
-                            await invoke("reveal_in_finder", { path: dir });
-                          } catch (e) { alert(`打开失败: ${e}`); }
-                        }}
-                        className="rounded px-2 py-0.5 text-xs"
-                        style={{
-                          border: "0.5px solid var(--color-accent)",
-                          color: "var(--color-accent)",
-                        }}
-                      >
-                        打开目录
-                      </button>
-                      <button
-                        onClick={async () => {
-                          try {
-                            const { invoke } = await import("@tauri-apps/api/core");
-                            await invoke("clear_gpu_cache");
-                            const s = await invoke<typeof gpuStatus>("get_gpu_status");
-                            setGpuStatus(s);
-                          } catch (e) { alert(`清除失败: ${e}`); }
-                        }}
-                        className="rounded px-2 py-0.5 text-xs"
-                        style={{
-                          border: "0.5px solid var(--color-border)",
-                          color: "var(--color-text-tertiary)",
-                        }}
-                      >
-                        清除
-                      </button>
-                    </div>
-                  ) : gpuStatus.recommended ? (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                          {gpuStatus.detected.name} 已检测到
-                        </span>
-                        <button
-                          onClick={downloadGpuWhisper}
-                          disabled={gpuDownloading}
-                          className="rounded px-2 py-0.5 text-xs font-medium"
-                          style={{
-                            background: gpuDownloading ? "var(--color-border)" : "var(--color-accent)",
-                            color: "white",
-                            opacity: gpuDownloading ? 0.6 : 1,
-                          }}
-                        >
-                          {gpuDownloading ? "下载中..." : "自动下载"}
-                        </button>
-                        <button
-                          onClick={async () => {
-                            const { open } = await import("@tauri-apps/plugin-dialog");
-                            const path = await open({
-                              filters: [{ name: "GPU 加速文件", extensions: ["zip", "xz", "exe", "dll", "bin"] }],
-                              multiple: false,
-                            });
-                            if (path) {
-                              setGpuDownloading(true);
-                              try {
-                                const { invoke } = await import("@tauri-apps/api/core");
-                                await invoke("install_gpu_archive", { path });
-                                const s = await invoke<typeof gpuStatus>("get_gpu_status");
-                                setGpuStatus(s);
-                              } catch (e) { alert(`安装失败: ${e}`); }
-                              finally { setGpuDownloading(false); }
-                            }
-                          }}
-                          className="rounded px-2 py-0.5 text-xs"
-                          style={{
-                            border: "0.5px solid var(--color-border)",
-                            color: "var(--color-text-secondary)",
-                          }}
-                        >
-                          选择文件...
-                        </button>
-                      </div>
-                      {gpuStatus.download_url && (
-                        <div className="text-xs break-all" style={{ color: "var(--color-text-tertiary)" }}>
-                          下载地址: {gpuStatus.download_url}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                      使用 CPU 模式
-                    </span>
-                  )}
-                </SettingRow>
-                </>
-              )}
-              {settings.asrProvider === "groq" && (
-                <SettingRow label="API Key">
-                  <div className="flex flex-col gap-1">
-                    <input type="password" value={settings.groqApiKey}
-                      onChange={e => set("groqApiKey", e.target.value)}
-                      placeholder="gsk_..."
-                      className="w-full rounded-md px-3 py-2 text-sm outline-none"
-                      style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", fontFamily: "JetBrains Mono, monospace" }} />
-                    <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                      在 <span style={{ color: "var(--color-accent)" }}>console.groq.com</span> 免费获取，每天 14400 分钟配额
-                    </p>
-                  </div>
-                </SettingRow>
-              )}
-              {settings.asrProvider === "siliconflow" && (
-                <SettingRow label="API Key">
-                  <div className="flex flex-col gap-1">
-                    <input type="password" value={settings.siliconflowApiKey}
-                      onChange={e => set("siliconflowApiKey", e.target.value)}
-                      placeholder="sk-..."
-                      className="w-full rounded-md px-3 py-2 text-sm outline-none"
-                      style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)", fontFamily: "JetBrains Mono, monospace" }} />
-                    <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-                      在 <span style={{ color: "var(--color-accent)" }}>siliconflow.cn</span> 注册获取
-                    </p>
-                  </div>
-                </SettingRow>
-              )}
-            </div>
-
-            {/* 分隔线 */}
-            <div style={{ height: 1, background: "var(--color-border-subtle)" }} />
-
-            {/* ── 翻译 ── */}
-            <div className="flex flex-col gap-2.5">
-              <div className="flex items-baseline justify-between">
-                <SettingGroup label="翻译" />
+                <SettingGroup label="引擎" />
                 <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
                   {settings.translateProvider === "tencent" ? "每月 500 万字符免费" : "高质量，按量计费"}
                 </span>
               </div>
-              <SettingRow label="引擎">
+              <SettingRow label="提供商">
                 <CustomSelect value={settings.translateProvider} onChange={v => set("translateProvider", v)}
                   options={[{ code: "tencent", label: "腾讯云翻译" }, { code: "deepl", label: "DeepL" }]} />
               </SettingRow>
@@ -1580,38 +1089,16 @@ export function DesktopSubtitlePanel() {
               )}
             </div>
 
-            {/* ── 高级选项 折叠 ── */}
+            {/* 高级选项 */}
             <div style={{ height: 1, background: "var(--color-border-subtle)" }} />
-            <button onClick={() => setAdvancedOpen(o => !o)}
-              className="flex items-center justify-between text-xs"
-              style={{ color: "var(--color-text-tertiary)" }}>
-              <span>高级选项</span>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
-                style={{ transform: advancedOpen ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.15s" }}>
-                <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-            {advancedOpen && (
-              <div className="flex flex-col gap-2.5">
-                <SettingRow label="分片时长">
-                  <div className="flex items-center gap-3">
-                    <input type="number" min={60} max={600} value={settings.chunkSeconds}
-                      onChange={e => set("chunkSeconds", Number(e.target.value))}
-                      className="w-24 rounded-md px-3 py-2 text-sm outline-none"
-                      style={{ background: "var(--color-surface-2)", border: "1px solid var(--color-border)", color: "var(--color-text-primary)" }} />
-                    <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>秒</span>
-                  </div>
-                </SettingRow>
-                <SettingRow label="">
-                  <label className="flex items-center gap-2 cursor-pointer select-none">
-                    <input type="checkbox" checked={settings.skipCache}
-                      onChange={e => set("skipCache", e.target.checked)}
-                      className="h-4 w-4 rounded" style={{ accentColor: "var(--color-accent)" }} />
-                    <span className="text-sm" style={{ color: "var(--color-text-secondary)" }}>忽略缓存</span>
-                  </label>
-                </SettingRow>
-              </div>
-            )}
+            <SettingRow label="">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={settings.skipCache}
+                  onChange={e => set("skipCache", e.target.checked)}
+                  className="h-4 w-4 rounded" style={{ accentColor: "var(--color-accent)" }} />
+                <span className="text-sm" style={{ color: "var(--color-text-secondary)" }}>忽略缓存</span>
+              </label>
+            </SettingRow>
           </div>
         )}
       </div>

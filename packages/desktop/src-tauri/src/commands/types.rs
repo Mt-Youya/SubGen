@@ -124,3 +124,38 @@ pub struct ApiSegment {
 pub struct WhisperResponse {
     pub segments: Option<Vec<ApiSegment>>,
 }
+
+/// 纯翻译选项（前端传入，不包含 ASR 相关字段）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranslateFileOptions {
+    /// 输入 SRT 文件路径
+    pub input: String,
+    /// 输出目录
+    pub output_dir: String,
+    /// 源语言代码
+    pub source_lang: String,
+    /// 目标翻译语言代码
+    pub target_lang: String,
+    /// 是否生成双语字幕
+    pub bilingual: bool,
+    /// 翻译提供商："deepl" | "tencent"
+    pub translate_provider: String,
+    pub deepl_api_key: Option<String>,
+    pub tencent_secret_id: Option<String>,
+    pub tencent_secret_key: Option<String>,
+    /// 是否跳过缓存
+    pub skip_cache: Option<bool>,
+}
+
+/// 纯翻译结果（返回给前端）
+#[derive(Debug, Serialize)]
+pub struct TranslateFileResult {
+    pub segments: Vec<Segment>,
+    pub translated: Vec<Segment>,
+    pub original_srt: String,
+    pub translated_srt: String,
+    pub bilingual_srt: Option<String>,
+    pub original_path: String,
+    pub translated_path: String,
+    pub bilingual_path: Option<String>,
+}

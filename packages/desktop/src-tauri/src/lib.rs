@@ -39,6 +39,7 @@ pub fn run() {
             commands::gpu_cmd::get_gpu_bin_dir,
             // 主业务流程与文件工具
             commands::pipeline::generate_subtitles,
+            commands::pipeline::translate_file,
             commands::pipeline::cancel_subtitle,
             commands::pipeline::reveal_in_finder,
             commands::pipeline::save_srt,

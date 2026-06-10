@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use super::asr::{split_audio_for_asr, transcribe_chunk, transcribe_with_whisper_server, transcribe_with_whisper_legacy};
 use super::deps::{model_path, resolve_whisper, resolve_whisper_server};
 use super::translation::translate_segments;
-use super::types::{GenerateOptions, GenerateResult, Segment};
+use super::types::{GenerateOptions, GenerateResult, Segment, TranslateFileOptions, TranslateFileResult};
 use super::utils::{dirs_cache, emit_progress, emit_stage_done, find_free_port, num_cpus};
 
 /// 全局取消标志：input_path → 取消信号
@@ -545,6 +545,175 @@ pub async fn generate_subtitles(
 
     // 不自动写文件：返回 SRT 内容，让前端决定保存路径（用户可能想改文件名）
     Ok(GenerateResult {
+        segments,
+        translated,
+        original_srt,
+        translated_srt,
+        bilingual_srt,
+        original_path: original_path.to_string_lossy().to_string(),
+        translated_path: translated_path.to_string_lossy().to_string(),
+        bilingual_path: bilingual_path.map(|p| p.to_string_lossy().to_string()),
+    })
+}
+
+// ─────────────────────────────────────────────
+// SRT 解析工具
+// ─────────────────────────────────────────────
+
+/// 把 SRT 时间字符串（HH:MM:SS,mmm）解析为秒。
+fn parse_srt_time(s: &str) -> Result<f64, String> {
+    // 格式：HH:MM:SS,mmm 或 HH:MM:SS.mmm
+    let s = s.replace(',', ".");
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!("无效时间格式: {s}"));
+    }
+    let h: f64 = parts[0].trim().parse().map_err(|_| format!("无效时间: {s}"))?;
+    let m: f64 = parts[1].trim().parse().map_err(|_| format!("无效时间: {s}"))?;
+    let sec: f64 = parts[2].trim().parse().map_err(|_| format!("无效时间: {s}"))?;
+    Ok(h * 3600.0 + m * 60.0 + sec)
+}
+
+/// 解析 SRT 文本为 Segment 列表。
+fn parse_srt(content: &str) -> Result<Vec<Segment>, String> {
+    let text = content.replace("\r\n", "\n");
+    let blocks: Vec<&str> = text.split("\n\n").filter(|b| !b.trim().is_empty()).collect();
+    let mut segments = Vec::new();
+
+    for block in blocks {
+        let lines: Vec<&str> = block.trim().lines().collect();
+        if lines.len() < 2 {
+            continue;
+        }
+        // 跳过序号行（纯数字），找到时间轴行
+        let mut time_idx = 0;
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("-->") {
+                time_idx = i;
+                break;
+            }
+        }
+        if time_idx == 0 || time_idx >= lines.len() {
+            continue;
+        }
+        let time_parts: Vec<&str> = lines[time_idx].split("-->").collect();
+        if time_parts.len() != 2 {
+            continue;
+        }
+        let start = parse_srt_time(time_parts[0].trim())?;
+        let end = parse_srt_time(time_parts[1].trim())?;
+        let text = lines[time_idx + 1..].join("\n").trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        segments.push(Segment { start, end, text });
+    }
+
+    if segments.is_empty() {
+        return Err("未能在 SRT 文件中解析到有效字幕条目".to_string());
+    }
+    Ok(segments)
+}
+
+/// 直接翻译 SRT 字幕文件：解析 SRT → 翻译 → 返回结果。
+/// 跳过 ASR 转录阶段，仅做纯翻译。
+#[tauri::command]
+pub async fn translate_file(
+    app: AppHandle,
+    opts: TranslateFileOptions,
+) -> Result<TranslateFileResult, String> {
+    let input = Path::new(&opts.input);
+    if !input.exists() {
+        return Err(format!("输入文件不存在: {}", opts.input));
+    }
+    fs::create_dir_all(&opts.output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
+
+    let t_start = std::time::Instant::now();
+
+    // 缓存目录
+    let cache_dir = {
+        let meta = fs::metadata(input).ok();
+        let hash_src = format!(
+            "{}|{}|{}",
+            opts.input,
+            meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            meta.as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        );
+        let hash = &hex::encode(sha2::Sha256::digest(hash_src.as_bytes()))[..16];
+        let dir = dirs_cache().join(hash);
+        fs::create_dir_all(&dir).ok();
+        dir
+    };
+
+    // 解析 SRT
+    emit_progress(&app, &opts.input, "parsing", 0.05, "正在解析 SRT 文件...");
+    let srt_content = fs::read_to_string(input)
+        .map_err(|e| format!("读取 SRT 文件失败: {e}"))?;
+    let segments = parse_srt(&srt_content)?;
+    emit_stage_done(
+        &app, &opts.input, "parsing", t_start.elapsed().as_secs_f64(),
+        format!("解析完成，共 {} 条字幕", segments.len()),
+    );
+
+    // 构造 GenerateOptions 用于调用 translate_segments
+    let gen_opts = GenerateOptions {
+        input: opts.input.clone(),
+        output_dir: opts.output_dir.clone(),
+        source_lang: opts.source_lang.clone(),
+        target_lang: opts.target_lang.clone(),
+        bilingual: opts.bilingual,
+        asr_provider: String::new(),
+        translate_provider: opts.translate_provider.clone(),
+        groq_api_key: None,
+        siliconflow_api_key: None,
+        deepl_api_key: opts.deepl_api_key.clone(),
+        tencent_secret_id: opts.tencent_secret_id.clone(),
+        tencent_secret_key: opts.tencent_secret_key.clone(),
+        chunk_seconds: None,
+        skip_cache: opts.skip_cache,
+        whisper_model: None,
+    };
+
+    // 翻译
+    let client = reqwest::Client::new();
+    let t_translate = std::time::Instant::now();
+    emit_progress(&app, &opts.input, "translating", 0.15, "正在翻译字幕...");
+    let translated = translate_segments(&client, &segments, &gen_opts, Some(&cache_dir)).await?;
+    let trl_elapsed = t_translate.elapsed().as_secs_f64();
+    emit_stage_done(
+        &app, &opts.input, "translating", trl_elapsed,
+        format!("翻译完成，用时 {:.1}s", trl_elapsed),
+    );
+
+    // 格式化
+    emit_progress(&app, &opts.input, "saving", 0.92, "正在写入字幕文件...");
+    let stem = file_stem(input);
+    let output_dir = PathBuf::from(&opts.output_dir);
+    let original_path = output_dir.join(format!("{stem}.original.srt"));
+    let translated_path = output_dir.join(format!("{stem}.{}.srt", opts.target_lang.to_lowercase()));
+    let bilingual_path = opts
+        .bilingual
+        .then(|| output_dir.join(format!("{stem}.bilingual.srt")));
+
+    let original_srt = segments_to_srt(&segments);
+    let translated_srt = segments_to_srt(&translated);
+    let bilingual_srt = if opts.bilingual {
+        Some(merge_bilingual(&segments, &translated))
+    } else {
+        None
+    };
+
+    let total_elapsed = t_start.elapsed().as_secs_f64();
+    emit_stage_done(
+        &app, &opts.input, "done", total_elapsed,
+        format!("完成，总用时 {:.1}s", total_elapsed),
+    );
+
+    Ok(TranslateFileResult {
         segments,
         translated,
         original_srt,
