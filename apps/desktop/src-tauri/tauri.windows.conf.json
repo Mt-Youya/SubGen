@@ -6,7 +6,6 @@
       "resources/whisper.dll": "whisper.dll",
       "resources/ggml.dll": "ggml.dll",
       "resources/ggml-base.dll": "ggml-base.dll",
-      "resources/ggml-cpu.dll": "ggml-cpu.dll",
       "resources/ffmpeg.exe": "ffmpeg.exe"
     }
   }
