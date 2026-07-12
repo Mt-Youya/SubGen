@@ -37,14 +37,14 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == desktop-v* ]]; then
             VERSION="${GITHUB_REF_NAME#desktop-v}"
           else
-            VERSION=$(grep '^version' packages/desktop/src-tauri/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+            VERSION=$(grep '^version' apps/desktop/src-tauri/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           # 更新 tauri.conf.json
-          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" packages/desktop/src-tauri/tauri.conf.json
+          sed -i.bak "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" apps/desktop/src-tauri/tauri.conf.json
           # 更新 Cargo.toml（第一个 version 行）
-          sed -i.bak "0,/^version = .*/s/^version = .*/version = \"$VERSION\"/" packages/desktop/src-tauri/Cargo.toml
-          rm -f packages/desktop/src-tauri/tauri.conf.json.bak packages/desktop/src-tauri/Cargo.toml.bak
+          sed -i.bak "0,/^version = .*/s/^version = .*/version = \"$VERSION\"/" apps/desktop/src-tauri/Cargo.toml
+          rm -f apps/desktop/src-tauri/tauri.conf.json.bak apps/desktop/src-tauri/Cargo.toml.bak
           echo "Build version: $VERSION"
 
       - uses: actions/setup-node@v4
@@ -69,7 +69,7 @@ jobs:
       - name: Install macOS whisper-cpp (Homebrew) + ffmpeg
         if: matrix.platform == 'macos'
         run: |
-          mkdir -p packages/desktop/src-tauri/resources
+          mkdir -p apps/desktop/src-tauri/resources
 
           # ── whisper-cpp + ggml via Homebrew ──
           brew install whisper-cpp ffmpeg
@@ -77,73 +77,73 @@ jobs:
           WHISPER_CELLAR=$(brew --cellar whisper-cpp)/$(brew list --versions whisper-cpp | awk '{print $2}')
           GGML_OPT=$(brew --prefix ggml)/lib
 
-          cp "$WHISPER_CELLAR/bin/whisper-server" packages/desktop/src-tauri/resources/
-          cp "$WHISPER_CELLAR/bin/whisper-cli"    packages/desktop/src-tauri/resources/
-          cp "$WHISPER_CELLAR/lib/libwhisper.1.dylib" packages/desktop/src-tauri/resources/
+          cp "$WHISPER_CELLAR/bin/whisper-server" apps/desktop/src-tauri/resources/
+          cp "$WHISPER_CELLAR/bin/whisper-cli"    apps/desktop/src-tauri/resources/
+          cp "$WHISPER_CELLAR/lib/libwhisper.1.dylib" apps/desktop/src-tauri/resources/
           cp "$(find "$GGML_OPT" -name 'libggml.0.*.dylib' | head -1)" \
-             packages/desktop/src-tauri/resources/libggml.0.dylib
+             apps/desktop/src-tauri/resources/libggml.0.dylib
           cp "$(find "$GGML_OPT" -name 'libggml-base.0.*.dylib' | head -1)" \
-             packages/desktop/src-tauri/resources/libggml-base.0.dylib
+             apps/desktop/src-tauri/resources/libggml-base.0.dylib
 
-          cp "$(brew --prefix ffmpeg)/bin/ffmpeg" packages/desktop/src-tauri/resources/ffmpeg
+          cp "$(brew --prefix ffmpeg)/bin/ffmpeg" apps/desktop/src-tauri/resources/ffmpeg
 
           # ── 修改 rpath 为 @loader_path ──
           for bin in whisper-cli whisper-server; do
             for lib in libwhisper.1 libggml.0 libggml-base.0; do
               dylib="${lib}.dylib"
-              old_path=$(otool -L packages/desktop/src-tauri/resources/$bin | grep "$dylib" | awk '{print $1}' | head -1)
+              old_path=$(otool -L apps/desktop/src-tauri/resources/$bin | grep "$dylib" | awk '{print $1}' | head -1)
               if [ -n "$old_path" ]; then
                 install_name_tool -change "$old_path" "@loader_path/$dylib" \
-                  packages/desktop/src-tauri/resources/$bin
+                  apps/desktop/src-tauri/resources/$bin
               fi
             done
-            codesign --force --sign - packages/desktop/src-tauri/resources/$bin
+            codesign --force --sign - apps/desktop/src-tauri/resources/$bin
           done
 
           # 修复 libggml.0.dylib 内部依赖
-          install_name_tool -change "$(otool -L packages/desktop/src-tauri/resources/libggml.0.dylib | grep 'libggml-base' | awk '{print $1}' | head -1)" \
-            "@loader_path/libggml-base.0.dylib" packages/desktop/src-tauri/resources/libggml.0.dylib 2>/dev/null || true
+          install_name_tool -change "$(otool -L apps/desktop/src-tauri/resources/libggml.0.dylib | grep 'libggml-base' | awk '{print $1}' | head -1)" \
+            "@loader_path/libggml-base.0.dylib" apps/desktop/src-tauri/resources/libggml.0.dylib 2>/dev/null || true
 
           # ── 签名所有二进制 ──
-          codesign --force --sign - packages/desktop/src-tauri/resources/libwhisper.1.dylib
-          codesign --force --sign - packages/desktop/src-tauri/resources/libggml.0.dylib
-          codesign --force --sign - packages/desktop/src-tauri/resources/libggml-base.0.dylib
-          codesign --force --sign - packages/desktop/src-tauri/resources/ffmpeg
+          codesign --force --sign - apps/desktop/src-tauri/resources/libwhisper.1.dylib
+          codesign --force --sign - apps/desktop/src-tauri/resources/libggml.0.dylib
+          codesign --force --sign - apps/desktop/src-tauri/resources/libggml-base.0.dylib
+          codesign --force --sign - apps/desktop/src-tauri/resources/ffmpeg
 
       - name: Install Windows whisper-cpp + ffmpeg
         if: matrix.platform == 'windows-x64'
         shell: pwsh
         run: |
-          mkdir -p packages/desktop/src-tauri/resources
+          mkdir -p apps/desktop/src-tauri/resources
           # 下载 whisper.cpp 预编译 Windows 版本
           $version = (Invoke-RestMethod "https://api.github.com/repos/ggml-org/whisper.cpp/releases/latest").tag_name
           $whisper_url = "https://github.com/ggml-org/whisper.cpp/releases/download/$version/whisper-bin-x64.zip"
           Invoke-WebRequest -Uri $whisper_url -OutFile whisper-tmp.zip
           Expand-Archive -Path whisper-tmp.zip -DestinationPath whisper-tmp -Force
-          Copy-Item whisper-tmp/Release/whisper-server.exe packages/desktop/src-tauri/resources/
-          Copy-Item whisper-tmp/Release/whisper-cli.exe packages/desktop/src-tauri/resources/
+          Copy-Item whisper-tmp/Release/whisper-server.exe apps/desktop/src-tauri/resources/
+          Copy-Item whisper-tmp/Release/whisper-cli.exe apps/desktop/src-tauri/resources/
           # 复制所有 dll（whisper.dll + ggml*.dll，兼容各版本）
-          Get-ChildItem whisper-tmp/Release/*.dll | Copy-Item -Destination packages/desktop/src-tauri/resources/
+          Get-ChildItem whisper-tmp/Release/*.dll | Copy-Item -Destination apps/desktop/src-tauri/resources/
           Remove-Item -Recurse -Force whisper-tmp, whisper-tmp.zip
           # 下载 ffmpeg 静态编译版
           $ffmpeg_url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
           Invoke-WebRequest -Uri $ffmpeg_url -OutFile ffmpeg-tmp.zip
           Expand-Archive -Path ffmpeg-tmp.zip -DestinationPath ffmpeg-tmp -Force
           $ffmpeg_exe = Get-ChildItem -Path ffmpeg-tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          Copy-Item $ffmpeg_exe.FullName packages/desktop/src-tauri/resources/
+          Copy-Item $ffmpeg_exe.FullName apps/desktop/src-tauri/resources/
           Remove-Item -Recurse -Force ffmpeg-tmp, ffmpeg-tmp.zip
 
       - name: Install Linux whisper-cpp + ffmpeg
         if: matrix.platform == 'linux-x64'
         run: |
-          mkdir -p packages/desktop/src-tauri/resources
+          mkdir -p apps/desktop/src-tauri/resources
           # ffmpeg 静态版
           curl -L "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
                -o ffmpeg-linux.tar.xz
           tar -xf ffmpeg-linux.tar.xz
-          find ffmpeg-master-latest-linux64-gpl -name "ffmpeg" -type f | head -1 | xargs -I{} cp {} packages/desktop/src-tauri/resources/ffmpeg
+          find ffmpeg-master-latest-linux64-gpl -name "ffmpeg" -type f | head -1 | xargs -I{} cp {} apps/desktop/src-tauri/resources/ffmpeg
           rm -rf ffmpeg-master-latest-linux64-gpl ffmpeg-linux.tar.xz
-          chmod +x packages/desktop/src-tauri/resources/ffmpeg
+          chmod +x apps/desktop/src-tauri/resources/ffmpeg
           # 从源码编译 whisper.cpp（锁定与 Windows/macOS 一致的版本）
           sudo apt-get install -y cmake build-essential
           WHISPER_TAG=$(curl -sL --retry 3 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -159,8 +159,8 @@ jobs:
           cd whisper.cpp
           cmake -B build -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=ON
           cmake --build build --target whisper-server whisper-cli -j$(nproc)
-          cp build/bin/whisper-server build/bin/whisper-cli ../packages/desktop/src-tauri/resources/
-          chmod +x ../packages/desktop/src-tauri/resources/whisper-server ../packages/desktop/src-tauri/resources/whisper-cli
+          cp build/bin/whisper-server build/bin/whisper-cli ../apps/desktop/src-tauri/resources/
+          chmod +x ../apps/desktop/src-tauri/resources/whisper-server ../apps/desktop/src-tauri/resources/whisper-cli
 
       - uses: pnpm/action-setup@v4
 
@@ -172,7 +172,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          projectPath: packages/desktop
+          projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
           releaseName: "SubGen Desktop ${{ github.ref_name }}"
           releaseBody: "See the assets below for your platform."
