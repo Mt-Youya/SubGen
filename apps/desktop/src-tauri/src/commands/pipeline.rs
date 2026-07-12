@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use super::asr::{split_audio_for_asr, transcribe_chunk, transcribe_with_whisper_server, transcribe_with_whisper_legacy};
 use super::deps::{model_path, resolve_whisper, resolve_whisper_server};
 use super::translation::translate_segments;
-use super::types::{GenerateOptions, GenerateResult, Segment, TranslateFileOptions, TranslateFileResult};
+use super::types::{GenerateOptions, GenerateResult, Segment, TranscribeOptions, TranscribeResult, TranslateFileOptions, TranslateFileResult};
 use super::utils::{dirs_cache, emit_progress, emit_stage_done, find_free_port, num_cpus};
 
 /// 全局取消标志：input_path → 取消信号
@@ -543,7 +543,14 @@ pub async fn generate_subtitles(
         format!("完成，总用时 {:.1}s", total_elapsed),
     );
 
-    // 不自动写文件：返回 SRT 内容，让前端决定保存路径（用户可能想改文件名）
+    // 自动写入文件
+    if let Some(parent) = original_path.parent() { fs::create_dir_all(parent).ok(); }
+    fs::write(&original_path, &original_srt).ok();
+    fs::write(&translated_path, &translated_srt).ok();
+    if let (Some(bilingual_srt), Some(bilingual_path)) = (&bilingual_srt, &bilingual_path) {
+        fs::write(bilingual_path, bilingual_srt).ok();
+    }
+
     Ok(GenerateResult {
         segments,
         translated,
@@ -553,6 +560,244 @@ pub async fn generate_subtitles(
         original_path: original_path.to_string_lossy().to_string(),
         translated_path: translated_path.to_string_lossy().to_string(),
         bilingual_path: bilingual_path.map(|p| p.to_string_lossy().to_string()),
+    })
+}
+
+/// 纯音频转录：音频分片 → ASR → 返回 SRT。不做翻译。
+#[tauri::command]
+pub async fn transcribe_audio(
+    app: AppHandle,
+    opts: TranscribeOptions,
+) -> Result<TranscribeResult, String> {
+    let input = Path::new(&opts.input);
+    if !input.exists() {
+        return Err(format!("输入文件不存在: {}", opts.input));
+    }
+    fs::create_dir_all(&opts.output_dir).map_err(|e| format!("创建输出目录失败: {e}"))?;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = CANCEL_FLAGS.lock().map_err(|e| format!("锁取消标志失败: {e}"))?;
+        map.insert(opts.input.clone(), cancel.clone());
+    }
+    let _cleanup = CancelGuard(opts.input.clone());
+
+    let chunk_seconds = opts.chunk_seconds.unwrap_or(240).clamp(60, 600);
+    let skip_cache = opts.skip_cache.unwrap_or(false);
+
+    let cache_dir = {
+        let meta = fs::metadata(input).ok();
+        let hash_src = format!(
+            "{}|{}|{}",
+            opts.input,
+            meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            meta.as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        );
+        let hash = &hex::encode(sha2::Sha256::digest(hash_src.as_bytes()))[..16];
+        let dir = dirs_cache().join(hash);
+        fs::create_dir_all(&dir).ok();
+        dir
+    };
+
+    let t_start = std::time::Instant::now();
+
+    // ASR 缓存
+    let asr_cache_file = cache_dir.join(format!("asr_{}_{}.json", opts.asr_provider, opts.source_lang));
+
+    let segments = if !skip_cache && asr_cache_file.exists() {
+        emit_progress(&app, &opts.input, "transcribing", 0.65, "从缓存加载转录结果...");
+        let raw = fs::read_to_string(&asr_cache_file).unwrap_or_default();
+        serde_json::from_str::<Vec<Segment>>(&raw).unwrap_or_default()
+    } else {
+        if skip_cache { fs::remove_file(&asr_cache_file).ok(); }
+
+        let temp_dir = env::temp_dir().join(format!("subgen-desktop-{}", Utc::now().timestamp_millis()));
+        let t_extract = std::time::Instant::now();
+        emit_progress(&app, &opts.input, "extracting", 0.02, "正在本地提取并分片音频...");
+        let chunks = split_audio_for_asr(&app, input, &temp_dir, chunk_seconds, cancel.clone()).await?;
+        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
+        let extract_elapsed = t_extract.elapsed().as_secs_f64();
+        emit_stage_done(&app, &opts.input, "extracting", extract_elapsed,
+            format!("音频提取完成，用时 {:.1}s", extract_elapsed));
+        let total = chunks.len();
+
+        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
+        let segs = if opts.asr_provider == "local-whisper" {
+            let server_bin = resolve_whisper_server(&app).or_else(|_| resolve_whisper(&app))?;
+            let model_name = opts.whisper_model.as_deref().unwrap_or("small");
+            let model = model_path(model_name);
+            if !model.exists() {
+                return Err(format!("请先下载 Whisper 模型 {model_name}（在设置中点击下载）"));
+            }
+            let use_server = server_bin.file_name().and_then(|n| n.to_str()).map(|n| n.contains("server")).unwrap_or(false);
+
+            if use_server {
+                let port = find_free_port().unwrap_or(18200);
+                let t_load = std::time::Instant::now();
+                emit_progress(&app, &opts.input, "loading_model", 0.32,
+                    format!("正在加载 Whisper 模型（{}）...", model_name));
+                let threads = num_cpus();
+                let srv = super::utils::silent_command(&server_bin)
+                    .args(["-m", &model.to_string_lossy(), "--port", &port.to_string(), "-t", &threads.to_string()])
+                    .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped())
+                    .spawn().map_err(|e| format!("启动 whisper-server 失败: {e}"))?;
+                let mut servers = vec![srv];
+
+                let client = reqwest::Client::new();
+                let start = std::time::Instant::now();
+                loop {
+                    if cancel.load(Ordering::SeqCst) { for s in &mut servers { s.kill().ok(); } return Err("已取消".to_string()); }
+                    if start.elapsed().as_secs() > 120 { for s in &mut servers { s.kill().ok(); } return Err("whisper-server 启动超时".to_string()); }
+                    if client.get(format!("http://127.0.0.1:{port}/")).send().await.is_ok() {
+                        emit_stage_done(&app, &opts.input, "loading_model", t_load.elapsed().as_secs_f64(),
+                            format!("模型就绪，用时 {:.1}s", t_load.elapsed().as_secs_f64()));
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+
+                let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let mut handles = Vec::new();
+                let cancel_srv = cancel.clone();
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let client = client.clone(); let chunk = chunk.clone();
+                    let lang = opts.source_lang.clone();
+                    let offset = i as f64 * chunk_seconds as f64;
+                    let done_count = done_count.clone(); let app = app.clone();
+                    let input_path = opts.input.clone(); let cancel = cancel_srv.clone();
+                    handles.push(tokio::spawn(async move {
+                        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
+                        let result = transcribe_with_whisper_server(&client, port, &chunk, &lang, offset).await;
+                        let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        emit_progress(&app, &input_path, "transcribing",
+                            0.38 + 0.28 * (done as f64 / total as f64),
+                            format!("转录完成 {done}/{total}"));
+                        result.map(|s| (i, s))
+                    }));
+                }
+                let mut results = Vec::new();
+                for h in handles {
+                    if cancel.load(Ordering::SeqCst) { for s in &mut servers { s.kill().ok(); } return Err("已取消".to_string()); }
+                    match h.await {
+                        Ok(Ok(r)) => results.push(r),
+                        Ok(Err(e)) => { for s in &mut servers { s.kill().ok(); } return Err(e); }
+                        Err(e) => { for s in &mut servers { s.kill().ok(); } return Err(format!("转录任务崩溃: {e}")); }
+                    }
+                }
+                for s in &mut servers { s.kill().ok(); }
+                results.sort_by_key(|(i, _)| *i);
+                results.into_iter().flat_map(|(_, s)| s).collect::<Vec<_>>()
+            } else {
+                // whisper-cli 兜底
+                let whisper = server_bin;
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+                let done_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let mut handles = Vec::new();
+                let cancel_cli = cancel.clone();
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let whisper = whisper.clone(); let model = model.clone();
+                    let chunk = chunk.clone(); let lang = opts.source_lang.clone();
+                    let offset = i as f64 * chunk_seconds as f64;
+                    let sem = sem.clone(); let done_count = done_count.clone();
+                    let app = app.clone(); let input_path = opts.input.clone();
+                    let cancel = cancel_cli.clone();
+                    handles.push(tokio::spawn(async move {
+                        if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
+                        let _permit = sem.acquire().await.unwrap();
+                        let result = transcribe_with_whisper_legacy(&whisper, &model, &chunk, &lang, offset).await;
+                        let done = done_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        emit_progress(&app, &input_path, "transcribing",
+                            0.38 + 0.28 * (done as f64 / total as f64),
+                            format!("转录完成 {done}/{total}"));
+                        result.map(|s| (i, s))
+                    }));
+                }
+                let mut results = Vec::new();
+                for h in handles {
+                    if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
+                    match h.await {
+                        Ok(Ok(r)) => results.push(r),
+                        Ok(Err(e)) => return Err(e),
+                        Err(e) => return Err(format!("转录任务崩溃: {e}")),
+                    }
+                }
+                results.sort_by_key(|(i, _)| *i);
+                results.into_iter().flat_map(|(_, s)| s).collect::<Vec<_>>()
+            }
+        } else {
+            // 云 API (Groq / SiliconFlow)
+            let client_ref = reqwest::Client::new();
+            let mut handles = Vec::new();
+            let cancel_cloud = cancel.clone();
+            for (i, chunk) in chunks.iter().enumerate() {
+                let client = client_ref.clone(); let chunk = chunk.clone();
+                let provider = opts.asr_provider.clone(); let lang = opts.source_lang.clone();
+                let groq_key = opts.groq_api_key.clone(); let sf_key = opts.siliconflow_api_key.clone();
+                let offset = i as f64 * chunk_seconds as f64;
+                let cancel = cancel_cloud.clone();
+                handles.push(tokio::spawn(async move {
+                    if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
+                    let opts_clone = GenerateOptions {
+                        input: String::new(), output_dir: String::new(),
+                        source_lang: lang.clone(), target_lang: String::new(), bilingual: false,
+                        asr_provider: provider.clone(), translate_provider: String::new(),
+                        groq_api_key: groq_key, siliconflow_api_key: sf_key,
+                        deepl_api_key: None, tencent_secret_id: None, tencent_secret_key: None,
+                        chunk_seconds: None, skip_cache: None, whisper_model: None,
+                    };
+                    transcribe_chunk(&client, &provider, &chunk, &lang, &opts_clone).await.map(|mut segs| {
+                        for seg in &mut segs {
+                            seg.start += offset;
+                            seg.end = if seg.end > 0.0 { seg.end + offset } else { offset + 240.0 };
+                        }
+                        (i, segs)
+                    })
+                }));
+            }
+            let mut results: Vec<(usize, Vec<Segment>)> = Vec::new();
+            for handle in handles {
+                if cancel.load(Ordering::SeqCst) { return Err("已取消".to_string()); }
+                match handle.await {
+                    Ok(Ok(r)) => { results.push(r); }
+                    Ok(Err(e)) => return Err(e),
+                    Err(e) => return Err(format!("转录任务崩溃: {e}")),
+                }
+            }
+            results.sort_by_key(|(i, _)| *i);
+            results.into_iter().flat_map(|(_, s)| s).collect::<Vec<_>>()
+        };
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        if segs.is_empty() { return Err("未检测到语音内容".to_string()); }
+
+        let asr_elapsed = t_extract.elapsed().as_secs_f64();
+        emit_stage_done(&app, &opts.input, "transcribing", asr_elapsed,
+            format!("转录完成，用时 {:.1}s", asr_elapsed));
+        if let Ok(json) = serde_json::to_string(&segs) { fs::write(&asr_cache_file, json).ok(); }
+        segs
+    };
+
+    let stem = file_stem(input);
+    let output_dir = PathBuf::from(&opts.output_dir);
+    let original_path = output_dir.join(format!("{stem}.original.srt"));
+    let original_srt = segments_to_srt(&segments);
+
+    let total_elapsed = t_start.elapsed().as_secs_f64();
+    emit_stage_done(&app, &opts.input, "done", total_elapsed,
+        format!("完成，总用时 {:.1}s", total_elapsed));
+
+    // 自动写入文件
+    if let Some(parent) = original_path.parent() { fs::create_dir_all(parent).ok(); }
+    fs::write(&original_path, &original_srt).ok();
+
+    Ok(TranscribeResult {
+        segments,
+        original_srt,
+        original_path: original_path.to_string_lossy().to_string(),
     })
 }
 
@@ -712,6 +957,14 @@ pub async fn translate_file(
         &app, &opts.input, "done", total_elapsed,
         format!("完成，总用时 {:.1}s", total_elapsed),
     );
+
+    // 自动写入文件
+    if let Some(parent) = original_path.parent() { fs::create_dir_all(parent).ok(); }
+    fs::write(&original_path, &original_srt).ok();
+    fs::write(&translated_path, &translated_srt).ok();
+    if let (Some(bilingual_srt), Some(bilingual_path)) = (&bilingual_srt, &bilingual_path) {
+        fs::write(bilingual_path, bilingual_srt).ok();
+    }
 
     Ok(TranslateFileResult {
         segments,

@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { DesktopSubtitlePanel } from "@/components/DesktopSubtitlePanel";
 import { ExtractPanel } from "@/components/ExtractPanel";
+import { TranscriptPanel } from "@/components/TranscriptPanel";
 import { TranslatePanel } from "@/components/TranslatePanel";
 import { ThemeToggle } from "../../web/components/ui/ThemeToggle";
 
-type Tab = "subtitle" | "extract" | "translate";
+type Tab = "extract" | "transcript" | "translate" | "subtitle";
 
 interface Deps {
   ffmpeg: boolean;
@@ -271,6 +272,7 @@ export default function Home() {
           {(
             [
               { key: "extract", label: "音频提取" },
+              { key: "transcript", label: "转录" },
               { key: "translate", label: "翻译" },
               { key: "subtitle", label: "字幕生成" },
             ] as { key: Tab; label: string }[]
@@ -301,6 +303,11 @@ export default function Home() {
         <div className="flex items-start justify-center" style={{ display: tab === "extract" ? "flex" : "none" }}>
           <div className="w-full max-w-4xl">
             <ExtractPanel />
+          </div>
+        </div>
+        <div className="flex items-start justify-center" style={{ display: tab === "transcript" ? "flex" : "none" }}>
+          <div className="w-full max-w-7xl">
+            <TranscriptPanel />
           </div>
         </div>
         <div className="flex items-start justify-center" style={{ display: tab === "translate" ? "flex" : "none" }}>

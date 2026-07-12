@@ -6,18 +6,19 @@
 
 ```
 SubGen/
-├── packages/
+├── apps/
 │   ├── desktop/       # Tauri v2 桌面应用（主线）
 │   │   ├── src-tauri/ # Rust 后端（whisper + ffmpeg + 翻译 API）
 │   │   ├── app/       # Next.js 前端
 │   │   └── components/
-│   ├── web/           # Next.js Web 前端（Vercel 部署）
+│   ├── web/           # Next.js Web 前端（Vercel 部署，四 Tab）
 │   └── shared/        # 共享类型 & SRT 工具
+├── server/            # FastAPI 本地开发服务
 ├── extractor/         # Rust CLI 音频提取工具
 └── .github/workflows/ # CI/CD（desktop + extractor）
 ```
 
-## packages/desktop — Tauri 桌面应用（主线）
+## apps/desktop — Tauri 桌面应用（主线）
 
 跨平台桌面应用（Windows / macOS / Linux），内置本地 Whisper 语音识别。
 
@@ -66,12 +67,12 @@ subextract a.mp4 b.mkv c.ts -o ./output
 subextract video.mp4 -d 120 -o ./output  # 只提取前 120 秒
 ```
 
-## packages/web — Web 前端
+## apps/web — Web 前端
 
-云端运行，调用 ASR / 翻译 API。适合 Vercel 部署。
+云端运行，调用 ASR / 翻译 API。适合 Vercel 部署。四个功能 Tab：音频提取 / 转录 / 翻译 / 字幕生成。
 
 ```bash
-cp packages/web/.env.example packages/web/.env.local
+cp apps/web/.env.example apps/web/.env.local
 # 编辑 .env.local 填入 API Key
 pnpm dev:web
 ```

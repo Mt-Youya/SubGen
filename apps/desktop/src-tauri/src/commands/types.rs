@@ -159,3 +159,35 @@ pub struct TranslateFileResult {
     pub translated_path: String,
     pub bilingual_path: Option<String>,
 }
+
+/// 纯转录选项（前端传入，不包含翻译相关字段）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TranscribeOptions {
+    /// 输入音频文件路径
+    pub input: String,
+    /// 输出目录
+    pub output_dir: String,
+    /// 源语言代码（如 "zh"、"ja"、"auto"）
+    pub source_lang: String,
+    /// ASR 提供商："local-whisper" | "groq" | "siliconflow"
+    pub asr_provider: String,
+    pub groq_api_key: Option<String>,
+    pub siliconflow_api_key: Option<String>,
+    /// 音频分片时长（秒），默认 240s
+    pub chunk_seconds: Option<u32>,
+    /// 是否跳过缓存
+    pub skip_cache: Option<bool>,
+    /// Whisper 模型名称
+    pub whisper_model: Option<String>,
+}
+
+/// 纯转录结果（返回给前端，不含翻译）
+#[derive(Debug, Serialize)]
+pub struct TranscribeResult {
+    /// 转录 Segment 列表
+    pub segments: Vec<Segment>,
+    /// 原文 SRT 字符串
+    pub original_srt: String,
+    /// 原文 SRT 建议保存路径
+    pub original_path: String,
+}

@@ -7,8 +7,9 @@
     "dev:desktop:mac": "pnpm --filter @subgen/desktop dev:mac",
     "build": "pnpm --filter shared build && pnpm --filter web build",
     "build:desktop": "pnpm --filter @subgen/desktop build",
-    "lint": "pnpm -r lint",
     "preview": "pnpm --filter web build && pnpm --filter web start",
+    "lint": "oxlint",
+    "fmt": "oxfmt",
     "clean": "find . -name 'node_modules' -type d -not -path '*/.git/*' | xargs rm -rf",
     "clear:all": "rm -rf node_modules pnpm-lock.yaml && pnpm -r exec rm -rf dist node_modules pnpm-lock.yaml"
   },
@@ -16,8 +17,10 @@
     "node": ">=24",
     "pnpm": ">=11"
   },
-  "packageManager": "pnpm@11.5.3+sha512.7ac1c919341c213a34dc0d02afb7143c5c26ac26ee8c4782deea821b8ac64d2134a081fd8941dae6e29bbb48f58dfc2b7fbceeccc07cb2f09d219d342a4969ed",
-  "prettier": {
-    "printWidth": 120
+  "packageManager": "pnpm@11.12.0+sha512.820a6fbd0d9f04c226638002aead1e45340a9139dd5dc077c1d83ef44aa2481c8eb6637b4c9aa696a3c7e35ba818e49cf27213e5f2b91138d09b7a3e26e898ba",
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "oxfmt": "^0.58.0",
+    "oxlint": "^1.73.0"
   }
 }

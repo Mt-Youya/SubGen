@@ -61,6 +61,7 @@ rustc-ice-*.txt
 **/*.rs.bk
 *.pdb
 out/
+target-check
 
 # Tauri
 # gen/schemas 由 tauri build 自动生成
@@ -87,3 +88,11 @@ settings.local.json
 packages/desktop/src-tauri/whisper-cli.exe
 packages/desktop/src-tauri/whisper.dll
 packages/desktop/src-tauri/ggml*.dll
+apps/desktop/src-tauri/whisper-cli.exe
+apps/desktop/src-tauri/whisper.dll
+apps/desktop/src-tauri/ggml*.dll
+
+# Tauri resources (apps/)
+apps/desktop/src-tauri/resources/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/target-check

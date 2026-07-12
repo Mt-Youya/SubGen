@@ -344,9 +344,20 @@ export function ExtractPanel() {
               <div className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--color-accent)" }} />
               <span className="text-sm" style={{ color: "var(--color-accent)" }}>提取完成</span>
             </div>
-            <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
-              {doneCount} 个成功{errCount > 0 && ` · ${errCount} 个失败`}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+                {doneCount} 个成功{errCount > 0 && ` · ${errCount} 个失败`}
+              </span>
+              <button onClick={async () => {
+                if (!isTauri) return;
+                const { invoke } = await import("@tauri-apps/api/core");
+                invoke("reveal_in_finder", { path: outputDir });
+              }}
+                className="rounded px-3 py-1 text-xs font-medium"
+                style={{ background: "var(--color-surface-3)", color: "var(--color-text-primary)", border: "1px solid var(--color-border)" }}>
+                打开文件夹
+              </button>
+            </div>
           </div>
         );
       })()}

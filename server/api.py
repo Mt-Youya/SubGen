@@ -36,6 +36,7 @@ for _env in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 app = FastAPI(title="SubGen Local API")
 
@@ -494,6 +495,31 @@ def run_task(task_id: str, src_path: str, source_lang: str, target_lang: str, bi
         # 清理上传的临时文件
         try:
             os.unlink(src_path)
+        except Exception:
+            pass
+
+
+@app.post("/extract")
+async def extract(file: UploadFile = File(...)):
+    """从视频文件中提取音频"""
+    suffix = Path(file.filename or "input").suffix or ".bin"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    wav_fd, wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(wav_fd)
+
+    try:
+        extract_audio(tmp_path, wav_path)
+        out_name = Path(file.filename or "input").stem + ".wav"
+        return FileResponse(wav_path, media_type="audio/wav", filename=out_name,
+                            headers={"Content-Disposition": f'attachment; filename="{out_name}"'})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            os.unlink(tmp_path)
         except Exception:
             pass
 

@@ -64,37 +64,6 @@ function LogPanel({ logs, collapsed, onToggle }: { logs: LogEntry[]; collapsed: 
 }
 
 // ── 横排下载 Chip ─────────────────────────────────────────
-function DownloadChip({ title, subtitle, onClick }: {
-  title: string; subtitle: string; onClick: () => void;
-}) {
-  const [clicked, setClicked] = useState(false);
-  return (
-    <button
-      onClick={() => { onClick(); setClicked(true); setTimeout(() => setClicked(false), 2000); }}
-      className="flex-1 flex flex-col items-center gap-0.5 py-2 rounded-md transition-all duration-150"
-      style={{
-        background: clicked ? "var(--color-accent-muted)" : "var(--color-surface-3)",
-        border: `1px solid ${clicked ? "rgba(99,102,241,0.30)" : "transparent"}`,
-      }}
-      onMouseEnter={e => { if (!clicked) (e.currentTarget as HTMLElement).style.background = "var(--color-accent-muted)"; }}
-      onMouseLeave={e => { if (!clicked) (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"; }}
-    >
-      {clicked ? (
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ color: "var(--color-accent)" }}>
-          <path d="M3 8l4 4 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ) : (
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ color: "var(--color-text-tertiary)" }}>
-          <path d="M8 3v7M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          <path d="M3 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      )}
-      <span className="text-xs font-medium" style={{ color: clicked ? "var(--color-accent)" : "var(--color-text-primary)" }}>{title}</span>
-      <span className="text-[10px]" style={{ color: "var(--color-text-tertiary)" }}>{subtitle}</span>
-    </button>
-  );
-}
-
 // ── 字幕预览 ──────────────────────────────────────────────
 function SubtitlePreview({ result, sourceLang, targetLang }: {
   result: GenerateResult; sourceLang: string; targetLang: string;
@@ -592,9 +561,15 @@ export function DesktopSubtitlePanel() {
   useEffect(() => {
     setIsTauri(hasTauriRuntime());
     const saved = window.localStorage.getItem("subgen-desktop-settings");
+    const envDefaults = {
+      tencentSecretId: process.env.NEXT_PUBLIC_TENCENT_SECRET_ID ?? "",
+      tencentSecretKey: process.env.NEXT_PUBLIC_TENCENT_SECRET_KEY ?? "",
+    };
     if (saved) {
       try {
         const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+        if (!parsed.tencentSecretId) parsed.tencentSecretId = envDefaults.tencentSecretId;
+        if (!parsed.tencentSecretKey) parsed.tencentSecretKey = envDefaults.tencentSecretKey;
         setSettings(parsed);
         setSettingsOpen(!settingsComplete(parsed, true));
       } catch {
@@ -602,6 +577,7 @@ export function DesktopSubtitlePanel() {
         setSettingsOpen(true);
       }
     } else {
+      setSettings({ ...DEFAULT_SETTINGS, ...envDefaults });
       setSettingsOpen(true);
     }
     initialized.current = true;
@@ -1318,28 +1294,19 @@ export function DesktopSubtitlePanel() {
                           ))}
                         </div>
                       )}
-                      <div className="flex gap-1.5 p-1 rounded-md">
-                        {[
-                          { title: "原文", subtitle: sourceLang.toUpperCase(), onClick: async () => {
-                            if (!isTauri || !task.result) return;
-                            const { invoke } = await import("@tauri-apps/api/core");
-                            await invoke("save_srt", { path: task.result.originalPath, content: task.result.originalSrt });
-                            invoke("reveal_in_finder", { path: task.result.originalPath });
-                          }},
-                          { title: "译文", subtitle: targetLang, onClick: async () => {
-                            if (!isTauri || !task.result) return;
-                            const { invoke } = await import("@tauri-apps/api/core");
-                            await invoke("save_srt", { path: task.result.translatedPath, content: task.result.translatedSrt });
-                            invoke("reveal_in_finder", { path: task.result.translatedPath });
-                          }},
-                          ...(task.result.bilingualSrt ? [{ title: "双语", subtitle: "双轨", onClick: async () => {
-                            if (!isTauri || !task.result?.bilingualSrt) return;
-                            const { invoke } = await import("@tauri-apps/api/core");
-                            await invoke("save_srt", { path: task.result.bilingualPath, content: task.result.bilingualSrt });
-                            invoke("reveal_in_finder", { path: task.result.bilingualPath });
-                          }}] : []),
-                        ].map(item => <DownloadChip key={item.title} {...item} />)}
-                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!isTauri || !task.result) return;
+                          const { invoke } = await import("@tauri-apps/api/core");
+                          await invoke("reveal_in_finder", { path: task.result.originalPath });
+                        }}
+                        className="w-full rounded-md py-2 text-sm font-medium transition-all duration-150"
+                        style={{ background: "var(--color-surface-3)", color: "var(--color-text-primary)", border: "1px solid var(--color-border)" }}
+                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--color-accent-muted)"}
+                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"}
+                      >
+                        打开文件夹
+                      </button>
                       <LogPanel logs={task.logs} collapsed={logCollapsed} onToggle={toggleLog} />
                       <SubtitlePreview result={task.result} sourceLang={sourceLang} targetLang={targetLang} />
                     </div>
