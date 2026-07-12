@@ -1,25 +1,30 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import type { BatchFile, TranscribeResult } from "../SubtitleGenerator";
-import { DownloadRow, download } from "./DownloadRow";
-import { SrtIcon } from "./Icons";
+import { useState } from "react"
+import type { BatchFile, TranscribeResult } from "../SubtitleGenerator"
+import { DownloadRow, download } from "./DownloadRow"
+import { SrtIcon } from "./Icons"
 
 interface BatchResultPanelProps {
-  files: BatchFile[];
-  expandedId: string | null;
-  onToggleExpand: (id: string) => void;
-  sourceLang: string;
-  targetLang: string;
+  files: BatchFile[]
+  expandedId: string | null
+  onToggleExpand: (id: string) => void
+  sourceLang: string
+  targetLang: string
 }
 
-function FileResultPreview({ result, baseName, sourceLang, targetLang }: {
-  result: TranscribeResult;
-  baseName: string;
-  sourceLang: string;
-  targetLang: string;
+function FileResultPreview({
+  result,
+  baseName,
+  sourceLang,
+  targetLang,
+}: {
+  result: TranscribeResult
+  baseName: string
+  sourceLang: string
+  targetLang: string
 }) {
-  const [previewTab, setPreviewTab] = useState<"original" | "translated" | "bilingual">("original");
+  const [previewTab, setPreviewTab] = useState<"original" | "translated" | "bilingual">("original")
 
   const items = (() => {
     switch (previewTab) {
@@ -27,19 +32,19 @@ function FileResultPreview({ result, baseName, sourceLang, targetLang }: {
         return result.segments.map((seg, i) => ({
           primary: result.translated[i]?.text ?? seg.text,
           secondary: null as string | null,
-        }));
+        }))
       case "bilingual":
         return result.segments.map((seg, i) => ({
           primary: seg.text,
           secondary: result.translated[i]?.text ?? null,
-        }));
+        }))
       default:
         return result.segments.map((seg) => ({
           primary: seg.text,
           secondary: null as string | null,
-        }));
+        }))
     }
-  })();
+  })()
 
   return (
     <div className="space-y-2">
@@ -101,22 +106,17 @@ function FileResultPreview({ result, baseName, sourceLang, targetLang }: {
         </div>
         <div
           className="overflow-y-auto divide-y"
-          style={{
-            maxHeight: "200px",
-            background: "var(--color-surface-1)",
-            borderColor: "var(--color-border-subtle)",
-          } as React.CSSProperties}
+          style={
+            {
+              maxHeight: "200px",
+              background: "var(--color-surface-1)",
+              borderColor: "var(--color-border-subtle)",
+            } as React.CSSProperties
+          }
         >
           {items.slice(0, 10).map((item, i) => (
-            <div
-              key={i}
-              className="px-4 py-2.5 flex gap-3"
-              style={{ borderColor: "var(--color-border-subtle)" }}
-            >
-              <span
-                className="text-xs tabular-nums shrink-0 pt-0.5"
-                style={{ color: "var(--color-text-tertiary)" }}
-              >
+            <div key={i} className="px-4 py-2.5 flex gap-3" style={{ borderColor: "var(--color-border-subtle)" }}>
+              <span className="text-xs tabular-nums shrink-0 pt-0.5" style={{ color: "var(--color-text-tertiary)" }}>
                 {i + 1}
               </span>
               <div className="min-w-0 space-y-0.5">
@@ -139,21 +139,15 @@ function FileResultPreview({ result, baseName, sourceLang, targetLang }: {
         </div>
       </div>
     </div>
-  );
+  )
 }
 
-export function BatchResultPanel({
-  files,
-  expandedId,
-  onToggleExpand,
-  sourceLang,
-  targetLang,
-}: BatchResultPanelProps) {
-  const doneFiles = files.filter((f) => f.status === "done" && f.result);
-  const errorFiles = files.filter((f) => f.status === "error");
-  const totalSegments = doneFiles.reduce((sum, f) => sum + (f.result?.segments.length ?? 0), 0);
+export function BatchResultPanel({ files, expandedId, onToggleExpand, sourceLang, targetLang }: BatchResultPanelProps) {
+  const doneFiles = files.filter((f) => f.status === "done" && f.result)
+  const errorFiles = files.filter((f) => f.status === "error")
+  const totalSegments = doneFiles.reduce((sum, f) => sum + (f.result?.segments.length ?? 0), 0)
 
-  if (doneFiles.length === 0 && errorFiles.length === 0) return null;
+  if (doneFiles.length === 0 && errorFiles.length === 0) return null
 
   return (
     <div className="space-y-2 animate-fade-up">
@@ -186,10 +180,10 @@ export function BatchResultPanel({
             subtitle={`${doneFiles.length} 个文件 · SRT`}
             onClick={async () => {
               for (const f of doneFiles) {
-                if (!f.result) continue;
-                const baseName = f.file.name.replace(/\.[^.]+$/, "");
-                download(f.result.srt.original, `${baseName}.${sourceLang}.srt`);
-                await new Promise((r) => setTimeout(r, 300));
+                if (!f.result) continue
+                const baseName = f.file.name.replace(/\.[^.]+$/, "")
+                download(f.result.srt.original, `${baseName}.${sourceLang}.srt`)
+                await new Promise((r) => setTimeout(r, 300))
               }
             }}
           />
@@ -199,17 +193,17 @@ export function BatchResultPanel({
             subtitle={`${doneFiles.length} 个文件 · SRT`}
             onClick={async () => {
               for (const f of doneFiles) {
-                if (!f.result) continue;
-                const baseName = f.file.name.replace(/\.[^.]+$/, "");
-                download(f.result.srt.translated, `${baseName}.${targetLang.toLowerCase()}.srt`);
-                await new Promise((r) => setTimeout(r, 300));
+                if (!f.result) continue
+                const baseName = f.file.name.replace(/\.[^.]+$/, "")
+                download(f.result.srt.translated, `${baseName}.${targetLang.toLowerCase()}.srt`)
+                await new Promise((r) => setTimeout(r, 300))
               }
             }}
           />
         </div>
       )}
     </div>
-  );
+  )
 }
 
-export { FileResultPreview };
+export { FileResultPreview }

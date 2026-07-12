@@ -77,19 +77,19 @@ cp apps/web/.env.example apps/web/.env.local
 pnpm dev:web
 ```
 
-| 变量名 | 说明 |
-|--------|------|
+| 变量名                | 说明             |
+| --------------------- | ---------------- |
 | `SILICONFLOW_API_KEY` | 硅基流动 API Key |
-| `TENCENT_SECRET_ID` | 腾讯云 SecretId |
-| `TENCENT_SECRET_KEY` | 腾讯云 SecretKey |
+| `TENCENT_SECRET_ID`   | 腾讯云 SecretId  |
+| `TENCENT_SECRET_KEY`  | 腾讯云 SecretKey |
 
 ## 技术栈
 
-| 层 | 桌面版 | Web 版 |
-|----|--------|--------|
-| 框架 | Tauri v2 + Next.js 16 | Next.js 16 |
-| 语音识别 | whisper.cpp (server) / Groq / SiliconFlow | 硅基流动 SenseVoice |
-| 翻译 | DeepL / 腾讯云翻译 | 腾讯云翻译 |
-| 字幕 | Rust SRT 生成 | TypeScript SRT (shared) |
-| 音频提取 | ffmpeg (内置) | ffmpeg (系统) |
-| CI/CD | GitHub Actions + tauri-action | Vercel |
+| 层       | 桌面版                                    | Web 版                  |
+| -------- | ----------------------------------------- | ----------------------- |
+| 框架     | Tauri v2 + Next.js 16                     | Next.js 16              |
+| 语音识别 | whisper.cpp (server) / Groq / SiliconFlow | 硅基流动 SenseVoice     |
+| 翻译     | DeepL / 腾讯云翻译                        | 腾讯云翻译              |
+| 字幕     | Rust SRT 生成                             | TypeScript SRT (shared) |
+| 音频提取 | ffmpeg (内置)                             | ffmpeg (系统)           |
+| CI/CD    | GitHub Actions + tauri-action             | Vercel                  |

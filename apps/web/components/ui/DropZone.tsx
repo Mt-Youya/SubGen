@@ -1,77 +1,104 @@
-"use client";
+"use client"
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback } from "react"
 
 // Vercel Function 请求体上限 4.5 MB，始终压缩；此常量仅作展示用
-export const MAX_SIZE = 0;
+export const MAX_SIZE = 0
 
 interface DropZoneProps {
-  file: File | null;
-  onFile: (f: File) => void;
-  disabled?: boolean;
+  file: File | null
+  onFile: (f: File) => void
+  disabled?: boolean
 }
 
-const ACCEPTED = ["video/", "audio/", ".mkv", ".ts", ".m2ts"];
+const ACCEPTED = ["video/", "audio/", ".mkv", ".ts", ".m2ts"]
 
 function formatSize(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function FileIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-      <polyline points="14 2 14 8 20 8"/>
-      <line x1="12" y1="12" x2="12" y2="18"/>
-      <polyline points="9 15 12 18 15 15"/>
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="12" y1="12" x2="12" y2="18" />
+      <polyline points="9 15 12 18 15 15" />
     </svg>
-  );
+  )
 }
 
 function VideoIcon() {
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="4" width="20" height="16" rx="3"/>
-      <path d="m10 9 5 3-5 3V9Z"/>
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2" y="4" width="20" height="16" rx="3" />
+      <path d="m10 9 5 3-5 3V9Z" />
     </svg>
-  );
+  )
 }
 
 export function DropZone({ file, onFile, disabled }: DropZoneProps) {
-  const [dragging, setDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const tooLarge = file ? file.size > MAX_SIZE : false;
+  const [dragging, setDragging] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const tooLarge = file ? file.size > MAX_SIZE : false
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    if (disabled) return;
-    const f = e.dataTransfer.files[0];
-    if (f) onFile(f);
-  }, [onFile, disabled]);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setDragging(false)
+      if (disabled) return
+      const f = e.dataTransfer.files[0]
+      if (f) onFile(f)
+    },
+    [onFile, disabled]
+  )
 
   const borderColor = dragging
     ? "var(--color-accent)"
     : tooLarge
-    ? "oklch(78% 0.16 75 / 50%)"
-    : file
-    ? "oklch(72% 0.16 145 / 40%)"
-    : "var(--color-border)";
+      ? "oklch(78% 0.16 75 / 50%)"
+      : file
+        ? "oklch(72% 0.16 145 / 40%)"
+        : "var(--color-border)"
 
   const bgColor = dragging
     ? "var(--color-accent-muted)"
     : tooLarge
-    ? "oklch(78% 0.16 75 / 5%)"
-    : file
-    ? "oklch(72% 0.16 145 / 5%)"
-    : "var(--color-surface-1)";
+      ? "oklch(78% 0.16 75 / 5%)"
+      : file
+        ? "oklch(72% 0.16 145 / 5%)"
+        : "var(--color-surface-1)"
 
   return (
     <div
       onClick={() => !disabled && inputRef.current?.click()}
-      onDragOver={(e) => { e.preventDefault(); if (!disabled) setDragging(true); }}
-      onDragEnter={(e) => { e.preventDefault(); if (!disabled) setDragging(true); }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        if (!disabled) setDragging(true)
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault()
+        if (!disabled) setDragging(true)
+      }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
       className="rounded-[var(--radius-lg)] transition-all duration-200"
@@ -88,9 +115,9 @@ export function DropZone({ file, onFile, disabled }: DropZoneProps) {
         className="sr-only"
         accept="audio/*,video/*,.mkv,.ts,.m2ts"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onFile(f);
-          e.target.value = "";
+          const f = e.target.files?.[0]
+          if (f) onFile(f)
+          e.target.value = ""
         }}
         disabled={disabled}
       />
@@ -107,10 +134,7 @@ export function DropZone({ file, onFile, disabled }: DropZoneProps) {
             <VideoIcon />
           </div>
           <div className="min-w-0 flex-1">
-            <p
-              className="text-sm font-medium truncate"
-              style={{ color: "var(--color-text-primary)" }}
-            >
+            <p className="text-sm font-medium truncate" style={{ color: "var(--color-text-primary)" }}>
               {file.name}
             </p>
             {tooLarge ? (
@@ -124,12 +148,34 @@ export function DropZone({ file, onFile, disabled }: DropZoneProps) {
             )}
           </div>
           {tooLarge ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-warning)", flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ color: "var(--color-warning)", flexShrink: 0 }}
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
           ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-success)", flexShrink: 0 }}>
-              <polyline points="20 6 9 17 4 12"/>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ color: "var(--color-success)", flexShrink: 0 }}
+            >
+              <polyline points="20 6 9 17 4 12" />
             </svg>
           )}
         </div>
@@ -145,10 +191,7 @@ export function DropZone({ file, onFile, disabled }: DropZoneProps) {
             <FileIcon />
           </div>
           <div>
-            <p
-              className="text-sm font-medium"
-              style={{ color: "var(--color-text-secondary)" }}
-            >
+            <p className="text-sm font-medium" style={{ color: "var(--color-text-secondary)" }}>
               {dragging ? "松开以上传" : "拖放文件，或点击选择"}
             </p>
             <p className="text-xs mt-1" style={{ color: "var(--color-text-tertiary)" }}>
@@ -158,5 +201,5 @@ export function DropZone({ file, onFile, disabled }: DropZoneProps) {
         </div>
       )}
     </div>
-  );
+  )
 }

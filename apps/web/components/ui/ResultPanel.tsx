@@ -1,23 +1,23 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import type { TranscribeResult } from "../SubtitleGenerator";
+import { useState } from "react"
+import type { TranscribeResult } from "../SubtitleGenerator"
 
 interface ResultPanelProps {
-  result: TranscribeResult;
-  baseName: string;
-  sourceLang: string;
-  targetLang: string;
+  result: TranscribeResult
+  baseName: string
+  sourceLang: string
+  targetLang: string
 }
 
 function download(content: string, filename: string) {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function DownloadRow({
@@ -26,18 +26,18 @@ function DownloadRow({
   subtitle,
   onClick,
 }: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-  onClick: () => void;
+  icon: React.ReactNode
+  title: string
+  subtitle: string
+  onClick: () => void
 }) {
-  const [clicked, setClicked] = useState(false);
+  const [clicked, setClicked] = useState(false)
 
   const handleClick = () => {
-    onClick();
-    setClicked(true);
-    setTimeout(() => setClicked(false), 2000);
-  };
+    onClick()
+    setClicked(true)
+    setTimeout(() => setClicked(false), 2000)
+  }
 
   return (
     <button
@@ -48,12 +48,12 @@ function DownloadRow({
         border: "1px solid var(--color-border-subtle)",
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)";
-        (e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)";
+        ;(e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)"
+        ;(e.currentTarget as HTMLElement).style.background = "var(--color-surface-3)"
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border-subtle)";
-        (e.currentTarget as HTMLElement).style.background = "var(--color-surface-2)";
+        ;(e.currentTarget as HTMLElement).style.borderColor = "var(--color-border-subtle)"
+        ;(e.currentTarget as HTMLElement).style.background = "var(--color-surface-2)"
       }}
     >
       <div
@@ -69,7 +69,9 @@ function DownloadRow({
         <p className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>
           {title}
         </p>
-        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>{subtitle}</p>
+        <p className="text-xs" style={{ color: "var(--color-text-tertiary)" }}>
+          {subtitle}
+        </p>
       </div>
       <div
         className="transition-all duration-200"
@@ -79,32 +81,44 @@ function DownloadRow({
       >
         {clicked ? (
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M3 8l4 4 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path
+              d="M3 8l4 4 6-6"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         ) : (
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M8 3v7M5 7l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M3 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            <path
+              d="M8 3v7M5 7l3 3 3-3"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path d="M3 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         )}
       </div>
     </button>
-  );
+  )
 }
 
 function SrtIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2"/>
-      <line x1="3" y1="5.5" x2="11" y2="5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-      <line x1="3" y1="8.5" x2="8" y2="8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+      <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="3" y1="5.5" x2="11" y2="5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="3" y1="8.5" x2="8" y2="8.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
-  );
+  )
 }
 
 export function ResultPanel({ result, baseName, sourceLang, targetLang }: ResultPanelProps) {
-  const [showPreview, setShowPreview] = useState(false);
-  const [previewTab, setPreviewTab] = useState<"original" | "translated" | "bilingual">("original");
+  const [showPreview, setShowPreview] = useState(false)
+  const [previewTab, setPreviewTab] = useState<"original" | "translated" | "bilingual">("original")
 
   const previewItems = (() => {
     switch (previewTab) {
@@ -112,19 +126,19 @@ export function ResultPanel({ result, baseName, sourceLang, targetLang }: Result
         return result.segments.map((seg, i) => ({
           primary: result.translated[i]?.text ?? seg.text,
           secondary: null,
-        }));
+        }))
       case "bilingual":
         return result.segments.map((seg, i) => ({
           primary: seg.text,
           secondary: result.translated[i]?.text ?? null,
-        }));
+        }))
       default:
         return result.segments.map((seg) => ({
           primary: seg.text,
           secondary: null,
-        }));
+        }))
     }
-  })();
+  })()
 
   return (
     <div className="space-y-2 animate-fade-up">
@@ -181,23 +195,26 @@ export function ResultPanel({ result, baseName, sourceLang, targetLang }: Result
           border: "1px solid transparent",
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border-subtle)";
-          (e.currentTarget as HTMLElement).style.background = "var(--color-surface-1)";
+          ;(e.currentTarget as HTMLElement).style.borderColor = "var(--color-border-subtle)"
+          ;(e.currentTarget as HTMLElement).style.background = "var(--color-surface-1)"
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.borderColor = "transparent";
-          (e.currentTarget as HTMLElement).style.background = "transparent";
+          ;(e.currentTarget as HTMLElement).style.borderColor = "transparent"
+          ;(e.currentTarget as HTMLElement).style.background = "transparent"
         }}
       >
         <span>预览字幕内容</span>
         <svg
-          width="14" height="14" viewBox="0 0 14 14" fill="none"
+          width="14"
+          height="14"
+          viewBox="0 0 14 14"
+          fill="none"
           style={{
             transform: showPreview ? "rotate(180deg)" : "none",
             transition: "transform 0.2s ease",
           }}
         >
-          <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
 
@@ -237,23 +254,18 @@ export function ResultPanel({ result, baseName, sourceLang, targetLang }: Result
           </div>
           <div
             className="overflow-y-auto divide-y"
-            style={{
-              maxHeight: "280px",
-              background: "var(--color-surface-1)",
-              "--tw-divide-opacity": 1,
-              borderColor: "var(--color-border-subtle)",
-            } as React.CSSProperties}
+            style={
+              {
+                maxHeight: "280px",
+                background: "var(--color-surface-1)",
+                "--tw-divide-opacity": 1,
+                borderColor: "var(--color-border-subtle)",
+              } as React.CSSProperties
+            }
           >
             {previewItems.slice(0, 10).map((item, i) => (
-              <div
-                key={i}
-                className="px-4 py-3 flex gap-4"
-                style={{ borderColor: "var(--color-border-subtle)" }}
-              >
-                <span
-                  className="text-xs tabular-nums shrink-0 pt-0.5"
-                  style={{ color: "var(--color-text-tertiary)" }}
-                >
+              <div key={i} className="px-4 py-3 flex gap-4" style={{ borderColor: "var(--color-border-subtle)" }}>
+                <span className="text-xs tabular-nums shrink-0 pt-0.5" style={{ color: "var(--color-text-tertiary)" }}>
                   {i + 1}
                 </span>
                 <div className="min-w-0 space-y-0.5">
@@ -269,16 +281,13 @@ export function ResultPanel({ result, baseName, sourceLang, targetLang }: Result
               </div>
             ))}
             {result.segments.length > 10 && (
-              <div
-                className="px-4 py-3 text-xs text-center"
-                style={{ color: "var(--color-text-tertiary)" }}
-              >
-                ···  剩余 {result.segments.length - 10} 条
+              <div className="px-4 py-3 text-xs text-center" style={{ color: "var(--color-text-tertiary)" }}>
+                ··· 剩余 {result.segments.length - 10} 条
               </div>
             )}
           </div>
         </div>
       )}
     </div>
-  );
+  )
 }

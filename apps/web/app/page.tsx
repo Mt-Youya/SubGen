@@ -1,16 +1,16 @@
-"use client";
+"use client"
 
-import { useState } from "react";
-import { SubtitleGenerator } from "@/components/SubtitleGenerator";
-import { WebExtractPanel } from "@/components/WebExtractPanel";
-import { WebTranscriptPanel } from "@/components/WebTranscriptPanel";
-import { WebTranslatePanel } from "@/components/WebTranslatePanel";
-import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { useState } from "react"
+import { SubtitleGenerator } from "@/components/SubtitleGenerator"
+import { WebExtractPanel } from "@/components/WebExtractPanel"
+import { WebTranscriptPanel } from "@/components/WebTranscriptPanel"
+import { WebTranslatePanel } from "@/components/WebTranslatePanel"
+import { ThemeToggle } from "@/components/ui/ThemeToggle"
 
-type Tab = "extract" | "transcript" | "translate" | "subtitle";
+type Tab = "extract" | "transcript" | "translate" | "subtitle"
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>("subtitle");
+  const [tab, setTab] = useState<Tab>("subtitle")
 
   return (
     <div className="relative min-h-dvh flex flex-col">
@@ -29,10 +29,7 @@ export default function Home() {
         <div className="absolute top-4 right-4">
           <ThemeToggle />
         </div>
-        <h1
-          className="text-3xl font-semibold tracking-tight mb-6"
-          style={{ color: "var(--color-text-primary)" }}
-        >
+        <h1 className="text-3xl font-semibold tracking-tight mb-6" style={{ color: "var(--color-text-primary)" }}>
           SubGen
         </h1>
 
@@ -91,5 +88,5 @@ export default function Home() {
         </div>
       </main>
     </div>
-  );
+  )
 }

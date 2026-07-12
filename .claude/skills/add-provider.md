@@ -5,13 +5,13 @@ description: 为 SubGen 添加新的 ASR 或翻译 Provider（Tauri 桌面版 + 
 
 ## 当前 Provider
 
-| 类型 | Provider | 桌面版文件 | Web 版文件 |
-|------|----------|-----------|-----------|
-| ASR | 本地 Whisper (server/cli) | `commands.rs` → `transcribe_with_whisper_server` | — |
-| ASR | Groq Whisper | `commands.rs` → `transcribe_with_groq` | `lib/groq.ts` |
-| ASR | SiliconFlow SenseVoice | `commands.rs` → `transcribe_with_siliconflow` | `lib/siliconflow.ts` |
-| 翻译 | 腾讯云翻译 | `commands.rs` → `translate_with_tencent` | `lib/tencent.ts` |
-| 翻译 | DeepL | `commands.rs` → `translate_with_deepl` | `lib/deepl.ts` |
+| 类型 | Provider                  | 桌面版文件                                       | Web 版文件           |
+| ---- | ------------------------- | ------------------------------------------------ | -------------------- |
+| ASR  | 本地 Whisper (server/cli) | `commands.rs` → `transcribe_with_whisper_server` | —                    |
+| ASR  | Groq Whisper              | `commands.rs` → `transcribe_with_groq`           | `lib/groq.ts`        |
+| ASR  | SiliconFlow SenseVoice    | `commands.rs` → `transcribe_with_siliconflow`    | `lib/siliconflow.ts` |
+| 翻译 | 腾讯云翻译                | `commands.rs` → `translate_with_tencent`         | `lib/tencent.ts`     |
+| 翻译 | DeepL                     | `commands.rs` → `translate_with_deepl`           | `lib/deepl.ts`       |
 
 ## Tauri 桌面版：添加 ASR Provider
 

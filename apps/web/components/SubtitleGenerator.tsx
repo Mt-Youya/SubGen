@@ -1,45 +1,45 @@
-"use client";
+"use client"
 
-import { useState, useCallback, useRef } from "react";
-import type { Segment } from "@subgen/shared";
-import { BatchDropZone, type BatchFileEntry } from "./ui/BatchDropZone";
-import { LanguageSelect } from "./ui/LanguageSelect";
-import { FileList } from "./ui/FileList";
-import { BatchProgress } from "./ui/BatchProgress";
-import { BatchResultPanel, FileResultPreview } from "./ui/BatchResultPanel";
-import { processSingleFile } from "@/lib/process";
+import { useState, useCallback, useRef } from "react"
+import type { Segment } from "@subgen/shared"
+import { BatchDropZone, type BatchFileEntry } from "./ui/BatchDropZone"
+import { LanguageSelect } from "./ui/LanguageSelect"
+import { FileList } from "./ui/FileList"
+import { BatchProgress } from "./ui/BatchProgress"
+import { BatchResultPanel, FileResultPreview } from "./ui/BatchResultPanel"
+import { processSingleFile } from "@/lib/process"
 
-export type Step = "idle" | "compressing" | "uploading" | "processing" | "done" | "error";
+export type Step = "idle" | "compressing" | "uploading" | "processing" | "done" | "error"
 
 export interface TaskProgress {
-  status: "pending" | "done" | "error";
-  stage: string;
-  stage_progress: number;
-  message: string;
+  status: "pending" | "done" | "error"
+  stage: string
+  stage_progress: number
+  message: string
 }
 
 const STAGE_WEIGHTS: Record<string, [number, number]> = {
-  pending:      [0.00, 0.00],
-  extracting:   [0.00, 0.10],
-  transcribing: [0.10, 0.60],
-  translating:  [0.70, 0.28],
-  done:         [0.98, 0.02],
-};
+  pending: [0.0, 0.0],
+  extracting: [0.0, 0.1],
+  transcribing: [0.1, 0.6],
+  translating: [0.7, 0.28],
+  done: [0.98, 0.02],
+}
 
 export function calcTotalProgress(stage: string, stage_progress: number): number {
-  const w = STAGE_WEIGHTS[stage];
-  if (!w) return 0;
-  return Math.min(1, w[0] + w[1] * stage_progress);
+  const w = STAGE_WEIGHTS[stage]
+  if (!w) return 0
+  return Math.min(1, w[0] + w[1] * stage_progress)
 }
 
 export interface TranscribeResult {
-  segments: Segment[];
-  translated: Segment[];
+  segments: Segment[]
+  translated: Segment[]
   srt: {
-    original: string;
-    translated: string;
-    bilingual: string | null;
-  };
+    original: string
+    translated: string
+    bilingual: string | null
+  }
 }
 
 export const SOURCE_LANGUAGES = [
@@ -50,7 +50,7 @@ export const SOURCE_LANGUAGES = [
   { code: "fr", label: "法语", flag: "🇫🇷" },
   { code: "de", label: "德语", flag: "🇩🇪" },
   { code: "es", label: "西班牙语", flag: "🇪🇸" },
-];
+]
 
 export const TARGET_LANGUAGES = [
   { code: "ZH", label: "中文（简体）", flag: "🇨🇳" },
@@ -60,113 +60,113 @@ export const TARGET_LANGUAGES = [
   { code: "KO", label: "韩语", flag: "🇰🇷" },
   { code: "FR", label: "法语", flag: "🇫🇷" },
   { code: "DE", label: "德语", flag: "🇩🇪" },
-];
+]
 
 // ── Batch types ──
 
-type BatchFileStatus = "pending" | "compressing" | "uploading" | "processing" | "done" | "error";
+type BatchFileStatus = "pending" | "compressing" | "uploading" | "processing" | "done" | "error"
 
 export interface BatchFile {
-  id: string;
-  file: File;
-  relativePath: string;
-  status: BatchFileStatus;
-  error?: string;
-  result?: TranscribeResult | null;
-  compressLabel?: string;
-  uploadLabel?: string;
-  taskProgress?: TaskProgress | null;
+  id: string
+  file: File
+  relativePath: string
+  status: BatchFileStatus
+  error?: string
+  result?: TranscribeResult | null
+  compressLabel?: string
+  uploadLabel?: string
+  taskProgress?: TaskProgress | null
 }
 
-type BatchPhase = "selecting" | "processing" | "done";
+type BatchPhase = "selecting" | "processing" | "done"
 
-let _batchId = 0;
+let _batchId = 0
 
 // ── Component ──
 
 export function SubtitleGenerator() {
-  const [files, setFiles] = useState<BatchFile[]>([]);
-  const [phase, setPhase] = useState<BatchPhase>("selecting");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [files, setFiles] = useState<BatchFile[]>([])
+  const [phase, setPhase] = useState<BatchPhase>("selecting")
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const [sourceLang, setSourceLang] = useState("ja");
-  const [targetLang, setTargetLang] = useState("ZH");
-  const [bilingual, setBilingual] = useState(false);
-  const [useCache, setUseCache] = useState(true);
+  const [sourceLang, setSourceLang] = useState("ja")
+  const [targetLang, setTargetLang] = useState("ZH")
+  const [bilingual, setBilingual] = useState(false)
+  const [useCache, setUseCache] = useState(true)
 
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const abortRef = useRef<AbortController | null>(null);
-  const filesRef = useRef<BatchFile[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const abortRef = useRef<AbortController | null>(null)
+  const filesRef = useRef<BatchFile[]>([])
   // Keep ref in sync
-  filesRef.current = files;
+  filesRef.current = files
 
   const updateFile = useCallback((id: string, patch: Partial<BatchFile>) => {
-    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
-  }, []);
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)))
+  }, [])
 
   const handleFilesAdded = useCallback(
     (entries: BatchFileEntry[]) => {
       // Deduplicate by name + size
-      const existing = new Set(files.map((f) => `${f.file.name}:${f.file.size}`));
-      const newEntries = entries.filter((e) => !existing.has(`${e.file.name}:${e.file.size}`));
-      if (newEntries.length === 0) return;
+      const existing = new Set(files.map((f) => `${f.file.name}:${f.file.size}`))
+      const newEntries = entries.filter((e) => !existing.has(`${e.file.name}:${e.file.size}`))
+      if (newEntries.length === 0) return
 
       const newFiles: BatchFile[] = newEntries.map((e) => ({
         id: `${Date.now()}-${++_batchId}`,
         file: e.file,
         relativePath: e.relativePath,
         status: "pending" as BatchFileStatus,
-      }));
+      }))
 
       // If there are results, adding new files resets everything
       if (phase === "done") {
-        setFiles(newFiles);
-        setPhase("selecting");
-        setExpandedId(null);
+        setFiles(newFiles)
+        setPhase("selecting")
+        setExpandedId(null)
       } else {
-        setFiles((prev) => [...prev, ...newFiles]);
+        setFiles((prev) => [...prev, ...newFiles])
       }
     },
-    [files, phase],
-  );
+    [files, phase]
+  )
 
   const handleRemoveFile = useCallback(
     (id: string) => {
-      setFiles((prev) => prev.filter((f) => f.id !== id));
-      if (expandedId === id) setExpandedId(null);
+      setFiles((prev) => prev.filter((f) => f.id !== id))
+      if (expandedId === id) setExpandedId(null)
     },
-    [expandedId],
-  );
+    [expandedId]
+  )
 
   const handleSubmit = async () => {
-    const pending = files.filter((f) => f.status === "pending" || f.status === "error");
-    if (pending.length === 0) return;
+    const pending = files.filter((f) => f.status === "pending" || f.status === "error")
+    if (pending.length === 0) return
 
     setFiles((prev) =>
       prev.map((f) =>
         f.status === "pending" || f.status === "error"
           ? { ...f, status: "pending", error: undefined, result: undefined }
-          : f,
-      ),
-    );
+          : f
+      )
+    )
 
-    setPhase("processing");
-    const controller = new AbortController();
-    abortRef.current = controller;
+    setPhase("processing")
+    const controller = new AbortController()
+    abortRef.current = controller
 
-    const CONCURRENCY = 2; // 同时处理 2 个文件
+    const CONCURRENCY = 2 // 同时处理 2 个文件
 
     const processNext = async () => {
       // Find next pending file (use ref for latest state in async context)
-      const idx = filesRef.current.findIndex((f) => f.status === "pending");
-      if (idx === -1) return;
+      const idx = filesRef.current.findIndex((f) => f.status === "pending")
+      if (idx === -1) return
 
-      const f = files[idx];
-      if (controller.signal.aborted) return;
+      const f = files[idx]
+      if (controller.signal.aborted) return
 
-      setCurrentIndex((prev) => Math.max(prev, idx));
+      setCurrentIndex((prev) => Math.max(prev, idx))
 
-      updateFile(f.id, { status: "compressing", compressLabel: "解码音频..." });
+      updateFile(f.id, { status: "compressing", compressLabel: "解码音频..." })
 
       try {
         const result = await processSingleFile(
@@ -181,40 +181,40 @@ export function SubtitleGenerator() {
               compressLabel: update.compressLabel,
               uploadLabel: update.uploadLabel,
               taskProgress: update.taskProgress ?? undefined,
-            } as Partial<BatchFile>);
+            } as Partial<BatchFile>)
           },
-          controller.signal,
-        );
+          controller.signal
+        )
 
-        updateFile(f.id, { status: "done", result });
-        await processNext(); // Process next in queue
+        updateFile(f.id, { status: "done", result })
+        await processNext() // Process next in queue
       } catch (err) {
-        if (controller.signal.aborted) return;
-        const msg = err instanceof Error ? err.message : "未知错误";
-        let displayMsg = msg;
+        if (controller.signal.aborted) return
+        const msg = err instanceof Error ? err.message : "未知错误"
+        let displayMsg = msg
         if (msg.includes("fetch") || msg.includes("Failed to fetch")) {
-          displayMsg = "网络连接失败，请检查网络后重试。";
+          displayMsg = "网络连接失败，请检查网络后重试。"
         }
-        console.error(`[${f.file.name}] 处理失败:`, err);
-        updateFile(f.id, { status: "error", error: displayMsg });
-        await processNext();
+        console.error(`[${f.file.name}] 处理失败:`, err)
+        updateFile(f.id, { status: "error", error: displayMsg })
+        await processNext()
       }
-    };
+    }
 
     // Start CONCURRENCY workers
-    const workers = Array.from({ length: CONCURRENCY }, () => processNext());
-    await Promise.all(workers);
+    const workers = Array.from({ length: CONCURRENCY }, () => processNext())
+    await Promise.all(workers)
 
-    abortRef.current = null;
-    setPhase("done");
-  };
+    abortRef.current = null
+    setPhase("done")
+  }
 
   const handleCancel = () => {
-    abortRef.current?.abort();
-  };
+    abortRef.current?.abort()
+  }
 
-  const pendingCount = files.filter((f) => f.status === "pending" || f.status === "error").length;
-  const isProcessing = phase === "processing";
+  const pendingCount = files.filter((f) => f.status === "pending" || f.status === "error").length
+  const isProcessing = phase === "processing"
 
   // ── Render ──
   return (
@@ -321,9 +321,7 @@ export function SubtitleGenerator() {
             boxShadow: pendingCount === 0 ? "none" : "0 0 24px var(--color-accent-glow)",
           }}
         >
-          {pendingCount === 0
-            ? "暂无待处理文件"
-            : `开始批量生成（${pendingCount} 个文件）`}
+          {pendingCount === 0 ? "暂无待处理文件" : `开始批量生成（${pendingCount} 个文件）`}
         </button>
       )}
 
@@ -348,8 +346,8 @@ export function SubtitleGenerator() {
           expandedId={expandedId}
           onToggleExpand={(id) => setExpandedId(expandedId === id ? null : id)}
           renderResult={(f) => {
-            if (!f.result) return null;
-            const baseName = f.file.name.replace(/\.[^.]+$/, "");
+            if (!f.result) return null
+            const baseName = f.file.name.replace(/\.[^.]+$/, "")
             return (
               <FileResultPreview
                 result={f.result}
@@ -357,10 +355,10 @@ export function SubtitleGenerator() {
                 sourceLang={sourceLang}
                 targetLang={targetLang}
               />
-            );
+            )
           }}
         />
       )}
     </div>
-  );
+  )
 }

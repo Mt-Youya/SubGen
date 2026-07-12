@@ -1,28 +1,25 @@
-"use client";
+"use client"
 
 interface Option {
-  code: string;
-  label: string;
-  flag: string;
+  code: string
+  label: string
+  flag: string
 }
 
 interface LanguageSelectProps {
-  label: string;
-  value: string;
-  onChange: (val: string) => void;
-  options: Option[];
-  disabled?: boolean;
+  label: string
+  value: string
+  onChange: (val: string) => void
+  options: Option[]
+  disabled?: boolean
 }
 
 export function LanguageSelect({ label, value, onChange, options, disabled }: LanguageSelectProps) {
-  const selected = options.find((o) => o.code === value);
+  const selected = options.find((o) => o.code === value)
 
   return (
     <div>
-      <label
-        className="block text-xs font-medium mb-1.5"
-        style={{ color: "var(--color-text-tertiary)" }}
-      >
+      <label className="block text-xs font-medium mb-1.5" style={{ color: "var(--color-text-tertiary)" }}>
         {label}
       </label>
       <div className="relative">
@@ -50,10 +47,16 @@ export function LanguageSelect({ label, value, onChange, options, disabled }: La
           style={{ color: "var(--color-text-tertiary)" }}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path
+              d="M2 4l4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         </div>
       </div>
     </div>
-  );
+  )
 }

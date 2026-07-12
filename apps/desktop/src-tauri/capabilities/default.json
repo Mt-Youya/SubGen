@@ -1,5 +1,5 @@
 {
-"identifier": "default",
+  "identifier": "default",
   "description": "Default capabilities for SubGen desktop",
   "windows": ["main"],
   "permissions": [
